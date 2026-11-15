@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import ReminderControls from "./reminder-controls";
 
@@ -64,18 +65,26 @@ function SavedNotes({ workspace, userId, currentNoteId, version }: {
   version: number;
 }) {
   const [scope, setScope] = useState<"mine" | "team">("mine");
+  const [searchText, setSearchText] = useState("");
   const [result, setResult] = useState<{
-    scope: "mine" | "team"; version: number; notes: SavedNote[]; message: string;
+    scope: "mine" | "team";
+    version: number;
+    search: string;
+    currentNoteId: string | null;
+    notes: SavedNote[];
+    message: string;
   } | null>(null);
   const teamNotes = scope === "team";
-  const currentResult = result?.scope === scope && result.version === version ? result : null;
-  const notes = currentResult?.notes.filter(note => note.id !== currentNoteId) ?? [];
-  const message = currentResult?.message ?? "Loading saved notes...";
+  const search = searchText.trim();
+  const currentResult = result?.scope === scope && result.version === version &&
+    result.search === search && result.currentNoteId === currentNoteId ? result : null;
+  const notes = currentResult?.notes ?? [];
+  const message = currentResult?.message ?? (search ? "Searching saved notes..." : "Loading saved notes...");
 
   useEffect(() => {
     const controller = new AbortController();
     const showResult = (notes: SavedNote[], message: string) => {
-      if (!controller.signal.aborted) setResult({ scope, version, notes, message });
+      if (!controller.signal.aborted) setResult({ scope, version, search, currentNoteId, notes, message });
     };
     const loadNotes = async () => {
       const { data: identity, error: identityError } = await supabase.auth.getUser();
@@ -85,15 +94,25 @@ function SavedNotes({ workspace, userId, currentNoteId, version }: {
         return;
       }
       const query = supabase.from("captures").select("id, note_text, uploaded_by")
-        .eq("workspace_id", workspace.id).eq("file_type", "text");
+        .eq("workspace_id", workspace.id).eq("file_type", "text").not("note_text", "is", null);
       if (scope === "mine") query.eq("uploaded_by", userId);
-      const { data, error } = await query.limit(100).abortSignal(controller.signal);
+      if (currentNoteId) query.neq("id", currentNoteId);
+      // PostgreSQL's ***= prefix treats the search term as literal text.
+      if (search) query.regexIMatch("note_text", `***=${search}`);
+      const { data, error } = await query
+        .order("created_at", { ascending: false }).order("id", { ascending: false })
+        .limit(search ? 100 : 3).abortSignal(controller.signal);
       if (error) throw error;
       showResult((data ?? []).filter((note): note is SavedNote => typeof note.note_text === "string"), "");
     };
-    void loadNotes().catch(() => showResult([], "Could not load saved notes. Please refresh to try again."));
-    return () => controller.abort();
-  }, [scope, userId, version, workspace.id]);
+    const timer = setTimeout(() => {
+      void loadNotes().catch(() => showResult([], "Could not load saved notes. Please refresh to try again."));
+    }, search ? 250 : 0);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [currentNoteId, scope, search, userId, version, workspace.id]);
 
   const changeScope = (nextScope: typeof scope) => {
     if (nextScope === scope) return;
@@ -114,12 +133,20 @@ function SavedNotes({ workspace, userId, currentNoteId, version }: {
         </button>
       </div>
       <p className="mt-3 text-sm text-gray-500">
-        {teamNotes ? `Notes from members of ${workspace.name}.` : `Your saved notes in ${workspace.name}.`} Showing up to 100 notes.
+        {teamNotes ? `Notes from members of ${workspace.name}.` : `Your saved notes in ${workspace.name}.`}
       </p>
+      <input
+        type="search"
+        aria-label="Search saved notes"
+        placeholder="Search saved notes"
+        value={searchText}
+        onChange={event => setSearchText(event.target.value)}
+        className="mt-4 w-full rounded-2xl border border-[#E2E6E0] px-4 py-3 text-base"
+      />
       {message && <p role="status" className="mt-4 text-sm text-gray-500">{message}</p>}
       {!message && notes.length === 0 && (
         <p role="status" className="mt-4 text-sm text-gray-500">
-          {teamNotes ? "No previous team notes yet." : "No previous notes yet."}
+          {search ? "No notes match your search." : teamNotes ? "No previous team notes yet." : "No previous notes yet."}
         </p>
       )}
       <div className="mt-4 space-y-3">
@@ -768,6 +795,9 @@ export default function Home() {
           <input type="password" autoComplete="current-password" aria-label="Password" placeholder="Password" required
             disabled={isSigningIn} value={password} onChange={(event) => setPassword(event.target.value)}
             className="mx-auto mt-3 block w-full border border-white bg-black px-4 py-3 text-white" />
+          <div className="mt-3 text-right">
+            <Link href="/forgot-password" className="text-sm text-gray-300 underline hover:text-white">Forgot password?</Link>
+          </div>
           <button type="submit" disabled={isSigningIn}
             className="mx-auto mt-4 block rounded-full bg-white px-6 py-3 text-black disabled:opacity-50">
             {isSigningIn ? "Opening your workspace..." : "Sign in"}
