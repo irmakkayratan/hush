@@ -2,6 +2,8 @@
 
 HUSH turns written and spoken notes into English updates for existing Notion tasks. Team members review the suggested task, update and status before confirming a send.
 
+**Previous saved notes** shows the three newest notes in **My notes** or **Team notes**. Use **Search saved notes** to find older entries in the selected view.
+
 ## Try the demo
 
 Download the repository and open `docs/index.html` in a browser. The demo uses sample notes and runs without accounts, keys or paid services. To embed it in a portfolio, publish the `docs` folder with [GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site) and use the resulting HTTPS URL in an iframe with the title `HUSH demo`.
@@ -46,6 +48,8 @@ npm start
 ```
 
 Set up HTTPS for access from an iPhone. The server must accept multipart requests up to 12 MiB for 10 MiB audio recordings.
+
+To enable **Forgot password?**, add your app’s exact `/reset-password` URL under **Authentication → URL Configuration → Redirect URLs** in Supabase. For local testing, add `http://localhost:3000/reset-password`. Use the default **Reset password** email template, or keep its `{{ .ConfirmationURL }}` link if you customize it. Supabase’s built-in email service is limited to project team members. Configure [custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp) to deliver reset emails to other users.
 
 ## Install on iPhone and test Apple Watch notifications
 
