@@ -4,6 +4,10 @@ HUSH turns written and spoken notes into English updates for existing Notion tas
 
 **Previous saved notes** shows the three newest notes in **My notes** or **Team notes**. Use **Search saved notes** to find older entries in the selected view.
 
+## Use HUSH with your team
+
+Open [HUSH](https://hush-e26z.onrender.com) and sign in with your team account. On iPhone, open the same address in Safari and choose **Add to Home Screen**. Open HUSH from the new icon and enable **Team notifications on this device** from your team.
+
 ## Try the demo
 
 Download the repository and open `docs/index.html` in a browser. The demo uses sample notes and runs without accounts, keys or paid services. To embed it in a portfolio, publish the `docs` folder with [GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site) and use the resulting HTTPS URL in an iframe with the title `HUSH demo`.
