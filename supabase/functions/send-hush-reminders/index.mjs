@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { createClient } from "npm:@supabase/supabase-js@2.119.0";
-import { sendNotification } from "npm:web-push@4.0.0";
+import { sendNotification } from "./web-push.mjs";
 import { sendDueReminders } from "../_shared/send-reminders.mjs";
 
 const url = Deno.env.get("SUPABASE_URL");

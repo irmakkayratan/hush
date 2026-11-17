@@ -37,6 +37,8 @@ export async function sendDueReminders(db, sendNotification, vapidDetails) {
           timeout: 15_000,
         });
         outcome = "accepted";
+      } else {
+        console.error("Push subscription format is invalid.");
       }
     } catch (error) {
       const status = error?.statusCode;

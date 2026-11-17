@@ -1,6 +1,3 @@
-import { Buffer } from "node:buffer";
-import { ECDH } from "node:crypto";
-
 function acceptsEndpoint(value) {
   if (typeof value !== "string" || value.length > 2048) return false;
   let url;
@@ -20,8 +17,7 @@ export function readPushSubscription(value) {
   if (typeof p256dh !== "string" || !/^[A-Za-z0-9_-]{87}$/.test(p256dh)
     || typeof auth !== "string" || !/^[A-Za-z0-9_-]{22}$/.test(auth)) return null;
 
-  const key = Buffer.from(p256dh, "base64url");
-  if (key[0] !== 4) return null;
-  try { ECDH.convertKey(key, "prime256v1"); } catch { return null; }
+  // A 65-byte uncompressed P-256 key starts with the byte 0x04.
+  if (!/^B[A-P]/.test(p256dh)) return null;
   return { endpoint: new URL(value.endpoint).href, keys: { p256dh, auth } };
 }
