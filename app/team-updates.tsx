@@ -90,6 +90,7 @@ export default function TeamUpdates({ workspaceId, userId, actionRef }: {
 }) {
   const [data, setData] = useState<TeamUpdatesData | null>(null);
   const [message, setMessage] = useState("");
+  const [view, setView] = useState<"scheduled" | "previous">("scheduled");
   const [loadError, setLoadError] = useState("");
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -132,6 +133,14 @@ export default function TeamUpdates({ workspaceId, userId, actionRef }: {
     }
   }
 
+  const rounds = (data?.rounds ?? []).map(round => {
+    const submitted = round.members.filter(member => member.submittedAt).length;
+    const complete = data?.canManage
+      ? round.members.length > 0 && submitted === round.members.length
+      : Boolean(round.submittedAt);
+    return { round, submitted, view: complete ? "previous" : "scheduled" };
+  });
+
   async function schedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -145,11 +154,12 @@ export default function TeamUpdates({ workspaceId, userId, actionRef }: {
       announce: input.has("announce"), reminderMinutes: reminder === "" ? null : Number(reminder),
       followUpMinutes: followUp === "" ? null : Number(followUp),
     }), "Team update scheduled.");
-    if (saved) { scheduleId.current = null; form.reset(); }
+    if (saved) { scheduleId.current = null; form.reset(); setView("scheduled"); }
   }
 
   function submit(roundId: string, text: string) {
-    void change(() => teamUpdateRequest(workspaceId, userId, { kind: "submit", roundId, text }), "Update submitted.");
+    void change(() => teamUpdateRequest(workspaceId, userId, { kind: "submit", roundId, text }), "Update submitted.")
+      .then(saved => { if (saved) setView("previous"); });
   }
 
   function enableNotifications() {
@@ -225,40 +235,60 @@ export default function TeamUpdates({ workspaceId, userId, actionRef }: {
         </details>
       )}
       {message && <p role="status" className="mt-3 text-sm text-gray-700">{message}</p>}
-      {data?.rounds.length === 0 && <p className="mt-3 text-sm text-gray-600">No team updates scheduled.</p>}
-      <ul className="mt-4 space-y-3">
-        {data?.rounds.map(round => (
-          <li key={round.id} className="rounded-2xl border border-[#E2E6E0] p-4">
-            <h3 className="font-semibold">{round.title}</h3>
-            <p className="mt-1 text-sm text-gray-600">
-              Due {formatDeadline(round.dueAt, round.timeZone)} ({round.timeZone}){round.weekly ? " · Weekly" : ""}
-            </p>
-            {round.instructions && <p className="mt-2 whitespace-pre-wrap break-words text-sm">{round.instructions}</p>}
-            {round.assigned && <p className="mt-2 text-sm font-medium">{submittedStatus(round.submittedAt, round.dueAt)}</p>}
-            {round.assigned && !round.submittedAt && (
-              <TeamUpdateForm workspaceId={workspaceId} userId={userId} actionRef={actionRef}
-                busy={busy} onSubmit={text => submit(round.id, text)} />
-            )}
-            {round.update && <p className="mt-2 whitespace-pre-wrap break-words text-sm">{round.update}</p>}
-            {data.canManage && (
-              <details className="mt-3 text-sm">
-                <summary className="cursor-pointer">{round.members.filter(member => member.submittedAt).length} of {round.members.length} updates submitted</summary>
-                <ul className="mt-2 space-y-2">
-                  {round.members.map((member, index) => (
-                    <li className="border-t border-[#E2E6E0] pt-2" key={member.id}>
-                      <p>{member.name?.trim() || `Member ${index + 1}`} · {submittedStatus(member.submittedAt, round.dueAt)}</p>
-                      {member.update && <p className="mt-1 whitespace-pre-wrap break-words text-gray-600">{member.update}</p>}
-                    </li>
-                  ))}
-                </ul>
-                <button type="button" className={`${actionButton} mt-3`} disabled={busy} onClick={() => {
-                  void change(() => teamUpdateRequest(workspaceId, userId, { kind: "cancel", id: round.scheduleId }), "Schedule cancelled.");
-                }}>Cancel schedule</button>
-              </details>
-            )}
-          </li>
-        ))}
-      </ul>
+      {data && (
+        <>
+          <div role="group" aria-label="Team update views" className="mt-4 flex flex-wrap gap-2">
+            {(["scheduled", "previous"] as const).map(tab => (
+              <button type="button" key={tab} aria-pressed={view === tab} onClick={() => setView(tab)}
+                className={`${actionButton} ${view === tab ? "bg-black text-white" : "bg-white"}`}>
+                {tab === "scheduled" ? "Scheduled" : "Previous updates"}
+              </button>
+            ))}
+          </div>
+          {!rounds.some(item => item.view === view) && <p className="mt-3 text-sm text-gray-600">
+            {view === "scheduled" ? "No scheduled updates." : "No previous updates yet."}
+          </p>}
+          <ul className="mt-4 space-y-3">
+            {rounds.map(({ round, submitted, view: roundView }) => (
+              <li key={round.id} hidden={roundView !== view} className="rounded-2xl border border-[#E2E6E0]">
+                <details>
+                  <summary className="cursor-pointer rounded-2xl p-4">
+                    <span className="font-semibold">{round.title}</span>
+                    <span className="mt-1 block text-sm text-gray-600">
+                      Due {formatDeadline(round.dueAt, round.timeZone)} ({round.timeZone}){round.weekly ? " · Weekly" : ""}
+                    </span>
+                    {round.assigned && <span className="mt-2 block text-sm font-medium">{submittedStatus(round.submittedAt, round.dueAt)}</span>}
+                    {data.canManage && <span className="mt-2 block text-sm">{submitted} of {round.members.length} updates submitted</span>}
+                  </summary>
+                  <div className="px-4 pb-4">
+                    {round.instructions && <p className="mt-2 whitespace-pre-wrap break-words text-sm">{round.instructions}</p>}
+                    {round.assigned && !round.submittedAt && (
+                      <TeamUpdateForm workspaceId={workspaceId} userId={userId} actionRef={actionRef}
+                        busy={busy} onSubmit={text => submit(round.id, text)} />
+                    )}
+                    {round.update && <p className="mt-2 whitespace-pre-wrap break-words text-sm">{round.update}</p>}
+                    {data.canManage && (
+                      <div className="mt-3 text-sm">
+                        <ul className="mt-2 space-y-2">
+                          {round.members.map((member, index) => (
+                            <li className="border-t border-[#E2E6E0] pt-2" key={member.id}>
+                              <p>{member.name?.trim() || `Member ${index + 1}`} · {submittedStatus(member.submittedAt, round.dueAt)}</p>
+                              {member.update && <p className="mt-1 whitespace-pre-wrap break-words text-gray-600">{member.update}</p>}
+                            </li>
+                          ))}
+                        </ul>
+                        <button type="button" className={`${actionButton} mt-3`} disabled={busy} onClick={() => {
+                          void change(() => teamUpdateRequest(workspaceId, userId, { kind: "cancel", id: round.scheduleId }), "Schedule cancelled.");
+                        }}>Cancel schedule</button>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </section>
   );
 }
