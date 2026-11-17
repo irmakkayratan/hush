@@ -2,8 +2,16 @@ self.addEventListener("push", (event) => {
   let reminder = {};
   try { reminder = event.data?.json() ?? {}; } catch {}
 
+  const teamMessages = {
+    scheduled: "A team update was scheduled. Open HUSH to see the deadline.",
+    due: "You have a team update due. Open HUSH to see the deadline.",
+    "follow-up": "Your team is waiting for an update. Open HUSH to submit it.",
+  };
+  const body = reminder.kind === "team-update"
+    ? (Object.hasOwn(teamMessages, reminder.phase) ? teamMessages[reminder.phase] : teamMessages.due)
+    : reminder.taskId ? "You have a scheduled task reminder. Tap to open the task." : "Your HUSH test reminder arrived.";
   event.waitUntil(self.registration.showNotification("HUSH", {
-    body: reminder.taskId ? "You have a scheduled task reminder. Tap to open the task." : "Your HUSH test reminder arrived.",
+    body,
     icon: "/hush-icons/icon-192.png",
     tag: typeof reminder.id === "string" ? reminder.id : "hush-reminder",
     data: { taskId: reminder.taskId },

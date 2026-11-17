@@ -4,7 +4,7 @@ const nextConfig: NextConfig = {
   /* config options here */
   async headers() {
     return [{
-      source: "/api/:feature(match-note|transcribe|notion-update|reminders)",
+      source: "/api/:feature(match-note|transcribe|notion-update|reminders|team-updates)",
       headers: [{ key: "Cache-Control", value: "private, no-store" }],
     }, {
       source: "/hush-worker.js",

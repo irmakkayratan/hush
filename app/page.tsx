@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { disableTeamNotifications } from "@/lib/team-updates-client";
 import ReminderControls from "./reminder-controls";
+import TeamUpdates from "./team-updates";
 
 type TaskDate = {
   label: "Deadline" | "Planned date";
@@ -764,6 +766,9 @@ export default function Home() {
           actionRef.current = true;
           setIsSigningIn(true);
           try {
+            if (signedInUser && workspaces[0]) {
+              await disableTeamNotifications(workspaces[0].id, signedInUser.id).catch(() => {});
+            }
             const { error } = await supabase.auth.signOut();
             if (error) throw error;
             setSignedInUser(null); setWorkspaces([]); setDisplayName(""); setNameDraft(""); setPassword("");
@@ -845,6 +850,7 @@ export default function Home() {
               if (actionRef.current) return;
               actionRef.current = true;
               try {
+                if (signedInUser) await disableTeamNotifications(connectedWorkspace.id, signedInUser.id).catch(() => {});
                 const { error } = await supabase.auth.signOut();
                 if (error) throw error;
                 setConnectedWorkspace(null);
@@ -1067,6 +1073,8 @@ export default function Home() {
             <SavedNotes key={`${connectedWorkspace.id}:${signedInUser.id}`} workspace={connectedWorkspace}
               userId={signedInUser.id} currentNoteId={savedNoteId} version={historyVersion} />
           )}
+          {signedInUser && <TeamUpdates key={`updates:${connectedWorkspace.id}:${signedInUser.id}`}
+            workspaceId={connectedWorkspace.id} userId={signedInUser.id} />}
           {signedInUser && <ReminderControls key={connectedWorkspace.id} workspaceId={connectedWorkspace.id} userId={signedInUser.id} />}
         </section>
         <footer className="border-t border-[#E2E6E0] py-6 text-center text-xs text-[#626A62]">Kayra Irmak Tan, 2026</footer>

@@ -1,0 +1,5 @@
+project_id = "hush"
+
+[functions.send-hush-reminders]
+verify_jwt = false
+entrypoint = "./functions/send-hush-reminders/index.mjs"
