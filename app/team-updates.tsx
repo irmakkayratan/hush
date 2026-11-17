@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 import { disableTeamNotifications, teamUpdateRequest } from "@/lib/team-updates-client";
+import { useVoiceRecording } from "./use-voice-recording";
 
 type Submission = { submittedAt: string | null; update: string | null };
 type UpdateRound = Submission & {
@@ -34,7 +35,59 @@ function submittedStatus(submittedAt: string | null, dueAt: string) {
   return Date.now() > deadline ? "Overdue" : "Pending";
 }
 
-export default function TeamUpdates({ workspaceId, userId }: { workspaceId: string; userId: string }) {
+type TeamUpdateFormProps = {
+  workspaceId: string;
+  userId: string;
+  actionRef: RefObject<boolean>;
+  busy: boolean;
+  onSubmit: (text: string) => void;
+};
+
+function TeamUpdateForm({ workspaceId, userId, actionRef, busy, onSubmit }: TeamUpdateFormProps) {
+  const [text, setText] = useState("");
+  const voice = useVoiceRecording({
+    workspaceId,
+    userId,
+    actionRef,
+    onTranscript: (transcript) => setText(previous => previous.trim() ? `${previous.trim()}\n\n${transcript}` : transcript),
+    transcriptMessage: "Review or edit your transcript, then select Submit update.",
+  });
+  const recordingBusy = voice.isPreparingRecording || voice.isRecording || voice.isTranscribing;
+
+  return (
+    <form className="mt-3" onSubmit={event => {
+      event.preventDefault();
+      if (!busy && !recordingBusy && text.trim() && text.length <= 1800) onSubmit(text);
+    }}>
+      <label className="block text-sm">Your update
+        <textarea name="update" className={field} rows={3} maxLength={1800} required
+          value={text} onChange={event => setText(event.target.value)} disabled={busy || recordingBusy} />
+      </label>
+      <button type="button" className={`${actionButton} mt-2`}
+        disabled={!voice.isRecording && (busy || recordingBusy)}
+        onClick={voice.isRecording ? voice.stopRecording : voice.startRecording}>
+        {voice.isRecording ? "Stop recording" : voice.isPreparingRecording ? "Opening microphone…" :
+          voice.isTranscribing ? "Transcribing…" : "Record a voice update"}
+      </button>
+      {voice.voiceMessage && <p role="status" className="mt-2 whitespace-pre-wrap text-sm">{voice.voiceMessage}</p>}
+      {voice.recordingUrl && <audio controls src={voice.recordingUrl} className="mt-2 w-full" />}
+      {voice.transcriptionFailed && <button type="button" className={`${actionButton} mt-2`}
+        disabled={busy || recordingBusy} onClick={voice.retryTranscription}>Try transcription again</button>}
+      {text.length > 1800 && <p role="status" className="mt-2 text-sm">Shorten your update to 1800 characters before submitting.</p>}
+      <div className="mt-2">
+        <button type="submit" className={actionButton} disabled={busy || recordingBusy || !text.trim() || text.length > 1800}>
+          Submit update
+        </button>
+      </div>
+    </form>
+  );
+}
+
+export default function TeamUpdates({ workspaceId, userId, actionRef }: {
+  workspaceId: string;
+  userId: string;
+  actionRef: RefObject<boolean>;
+}) {
   const [data, setData] = useState<TeamUpdatesData | null>(null);
   const [message, setMessage] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -95,9 +148,7 @@ export default function TeamUpdates({ workspaceId, userId }: { workspaceId: stri
     if (saved) { scheduleId.current = null; form.reset(); }
   }
 
-  function submit(event: FormEvent<HTMLFormElement>, roundId: string) {
-    event.preventDefault();
-    const text = new FormData(event.currentTarget).get("update");
+  function submit(roundId: string, text: string) {
     void change(() => teamUpdateRequest(workspaceId, userId, { kind: "submit", roundId, text }), "Update submitted.");
   }
 
@@ -185,12 +236,8 @@ export default function TeamUpdates({ workspaceId, userId }: { workspaceId: stri
             {round.instructions && <p className="mt-2 whitespace-pre-wrap break-words text-sm">{round.instructions}</p>}
             {round.assigned && <p className="mt-2 text-sm font-medium">{submittedStatus(round.submittedAt, round.dueAt)}</p>}
             {round.assigned && !round.submittedAt && (
-              <form className="mt-3" onSubmit={event => submit(event, round.id)}>
-                <label className="block text-sm">Your update
-                  <textarea name="update" className={field} rows={3} maxLength={1800} required disabled={busy} />
-                </label>
-                <button type="submit" className={`${actionButton} mt-2`} disabled={busy}>Submit update</button>
-              </form>
+              <TeamUpdateForm workspaceId={workspaceId} userId={userId} actionRef={actionRef}
+                busy={busy} onSubmit={text => submit(round.id, text)} />
             )}
             {round.update && <p className="mt-2 whitespace-pre-wrap break-words text-sm">{round.update}</p>}
             {data.canManage && (

@@ -86,6 +86,6 @@ Reminders go to the device on which you schedule them. Task reminders open the a
 
 In **Team updates**, a team manager can set a title, instructions, local deadline and time zone. Choose **Once** or **Weekly**. Weekly deadlines follow the selected time zone through daylight saving changes. The other current members are assigned an update when each round opens.
 
-Members submit a short update in HUSH. The manager can see which members are pending, submitted or overdue. A follow-up only goes to members who still owe an update. Managers can also choose a push notification when creating the schedule and a reminder before or at the deadline.
+Members type a short update or record a voice update in HUSH. They can edit the transcript before submitting. The manager can see which members are pending, submitted or overdue. A follow-up only goes to members who still owe an update. Managers can also choose a push notification when creating the schedule and a reminder before or at the deadline.
 
 Members turn on **Team notifications on this device** for each device that should receive pushes. Apply `team-updates.sql` to existing databases before deploying the new app and restarting `npm run reminders`. The reminder worker needs to be running when pushes are due.
