@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const files = [
   "base.sql", "create-team.sql", "save-notion-connection.sql", "notion-management.sql",
-  "notion-refresh.sql", "team-invites.sql", "notion-delivery.sql", "reminders.sql",
+  "notion-refresh.sql", "team-invites.sql", "notion-delivery.sql", "reminders.sql", "team-updates.sql",
 ];
 const directory = fileURLToPath(new URL("../supabase/", import.meta.url));
 for (const file of files) {

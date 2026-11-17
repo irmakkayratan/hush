@@ -8,8 +8,7 @@ const MAX_AHEAD_MS = 366 * 24 * 60 * 60 * 1000;
 const reply = (message: string, status: number) => Response.json({ message }, { status });
 
 export async function POST(request: Request) {
-  if (!process.env.NEXT_PUBLIC_HUSH_PUSH_PUBLIC_KEY || !process.env.HUSH_PUSH_PRIVATE_KEY
-    || !process.env.HUSH_PUSH_SUBJECT) return reply("Reminders are unavailable on this server.", 503);
+  if (!process.env.NEXT_PUBLIC_HUSH_PUSH_PUBLIC_KEY) return reply("Reminders are unavailable on this server.", 503);
 
   try {
     let body;

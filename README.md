@@ -22,8 +22,9 @@ You need Node.js 22 or newer, a Supabase project, a Notion public integration an
    6. [team-invites.sql](supabase/team-invites.sql)
    7. [notion-delivery.sql](supabase/notion-delivery.sql)
    8. [reminders.sql](supabase/reminders.sql), if you want notifications
+   9. [team-updates.sql](supabase/team-updates.sql), to schedule team updates
 
-   For a single file that includes all eight scripts, run `node scripts/install-hush-database.mjs > hush-database.sql` and paste the generated SQL into the editor.
+   For a single file that includes all nine scripts, run `node scripts/install-hush-database.mjs > hush-database.sql` and paste the generated SQL into the editor.
 
 2. Create and confirm your first email/password user in **Authentication → Users** in Supabase.
 3. Copy `.env.example` to `.env.local`. Add the Supabase project URL, publishable key and server secret under the corresponding names. The server secret, OpenAI key and Notion client secret belong in your local file or hosting environment.
@@ -51,6 +52,20 @@ Set up HTTPS for access from an iPhone. The server must accept multipart request
 
 To enable **Forgot password?**, add your app’s exact `/reset-password` URL under **Authentication → URL Configuration → Redirect URLs** in Supabase. For local testing, add `http://localhost:3000/reset-password`. Use the default **Reset password** email template, or keep its `{{ .ConfirmationURL }}` link if you customize it. Supabase’s built-in email service is limited to project team members. Configure [custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp) to deliver reset emails to other users.
 
+## Host HUSH independently of your laptop
+
+Deploy the web app with [Render Blueprints](https://render.com/docs/infrastructure-as-code). The repository’s `render.yaml` provisions a Node.js web service in Frankfurt. Render supplies the HTTPS address. Set the requested environment variables in Render. Reuse your existing Supabase project and Notion integration. Keep server credentials in the hosting environment and use the existing Notion token encryption key to preserve connections. The Free service wakes on the first request after idle time. Select an always-on instance if your users need immediate access after idle periods.
+
+For an existing HUSH database, confirm that `reminders.sql` and `team-updates.sql` are installed. Deploy the notification function with the Supabase CLI after signing in.
+
+```sh
+supabase functions deploy send-hush-reminders --project-ref YOUR_PROJECT_REF --use-api
+```
+
+Set `NEXT_PUBLIC_HUSH_PUSH_PUBLIC_KEY`, `HUSH_PUSH_PRIVATE_KEY`, `HUSH_PUSH_SUBJECT` and `HUSH_CRON_SECRET` in Supabase Edge Function secrets. The scheduled function uses the same Web Push key pair as the web app. Generate a separate cron credential with `openssl rand -hex 32`. In [Supabase Vault](https://supabase.com/docs/guides/database/vault), save that credential as `hush_reminder_cron_secret` and the full function URL as `hush_reminder_function_url`. Run [schedule-cloud-reminders.sql](supabase/schedule-cloud-reminders.sql) in the SQL Editor. Cron checks for due jobs every minute.
+
+Add the new HTTPS address plus `/reset-password` to the Supabase reset redirect allowlist. Verify sign-in, a password reset, and an iPhone test notification at the new URL. Each device must enable notifications from that URL. Confirm successful function calls in the Edge Function logs before stopping any local reminder worker.
+
 ## Install on iPhone and test Apple Watch notifications
 
 1. Run [reminders.sql](supabase/reminders.sql) if you skipped it above. Create a Web Push key pair once with `npx web-push generate-vapid-keys`. Set `NEXT_PUBLIC_HUSH_PUSH_PUBLIC_KEY`, `HUSH_PUSH_PRIVATE_KEY` and `HUSH_PUSH_SUBJECT` in `.env.local` or the hosting environment. Use a contact such as `mailto:owner@example.com` for the subject. Rebuild after changing the public key.
@@ -62,3 +77,11 @@ To enable **Forgot password?**, add your app’s exact `/reset-password` URL und
 Reminders go to the device on which you schedule them. Task reminders open the associated Notion task. Apple controls whether the alert appears on the iPhone or its paired Watch. The worker claims each reminder before sending and attempts it once. An expired subscription or an interrupted send can require scheduling the reminder again.
 
 [Apple Home Screen web push](https://webkit.org/blog/13878/) · [Apple Watch notification routing](https://support.apple.com/en-us/108274)
+
+## Schedule team updates
+
+In **Team updates**, a team manager can set a title, instructions, local deadline and time zone. Choose **Once** or **Weekly**. Weekly deadlines follow the selected time zone through daylight saving changes. The other current members are assigned an update when each round opens.
+
+Members submit a short update in HUSH. The manager can see which members are pending, submitted or overdue. A follow-up only goes to members who still owe an update. Managers can also choose a push notification when creating the schedule and a reminder before or at the deadline.
+
+Members turn on **Team notifications on this device** for each device that should receive pushes. Apply `team-updates.sql` to existing databases before deploying the new app and restarting `npm run reminders`. The reminder worker needs to be running when pushes are due.
