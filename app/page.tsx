@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { disableTeamNotifications } from "@/lib/team-updates-client";
 import ReminderControls from "./reminder-controls";
 import TeamUpdates from "./team-updates";
+import { useVoiceRecording } from "./use-voice-recording";
 
 type TaskDate = {
   label: "Deadline" | "Planned date";
@@ -167,11 +168,6 @@ function SavedNotes({ workspace, userId, currentNoteId, version }: {
 export default function Home() {
   const actionRef = useRef(false);
   const [showLanding, setShowLanding] = useState(true);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const recordingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const transcriptionAbortRef = useRef<AbortController | null>(null);
-  const mountedRef = useRef(true);
   const [connectedWorkspace, setConnectedWorkspace] = useState<{ id: string; name: string } | null>(null);
   const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]);
   const [signedInUser, setSignedInUser] = useState<{ id: string; email: string } | null>(null);
@@ -196,187 +192,24 @@ export default function Home() {
   const [deliveryUncertain, setDeliveryUncertain] = useState(false);
   const [delivery, setDelivery] = useState<Delivery | null>(null);
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
-  const [isPreparingRecording, setIsPreparingRecording] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const [recording, setRecording] = useState<Blob | null>(null);
-  const [recordingUrl, setRecordingUrl] = useState("");
-  const [voiceMessage, setVoiceMessage] = useState("");
-  const [transcriptionFailed, setTranscriptionFailed] = useState(false);
-  const busy = isSaving || isAnalyzing || isSending || isPreparingRecording || isRecording || isTranscribing || isSavingName;
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (recordingTimerRef.current) clearTimeout(recordingTimerRef.current);
-      const recorder = recorderRef.current;
-      if (recorder) {
-        recorder.onstop = null;
-        recorder.onerror = null;
-        recorder.ondataavailable = null;
-        if (recorder.state !== "inactive") recorder.stop();
-      }
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      transcriptionAbortRef.current?.abort();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!recording) {
-      setRecordingUrl("");
-      return;
-    }
-    const objectUrl = URL.createObjectURL(recording);
-    setRecordingUrl(objectUrl);
-    return () => URL.revokeObjectURL(objectUrl);
-  }, [recording]);
-
   const beginNewNote = () => {
     setSavedNoteId(null); setSavedNoteText(""); setMatchResult(null); setClarification("");
     setDelivery(null);
     if (!deliveryUncertain) setNoteFeedback(null);
   };
 
-  const releaseMicrophone = () => {
-    if (recordingTimerRef.current) {
-      clearTimeout(recordingTimerRef.current);
-      recordingTimerRef.current = null;
-    }
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    recorderRef.current = null;
-  };
-
-  const transcribeRecording = async (audio: Blob, originalName?: string) => {
-    setIsTranscribing(true);
-    setTranscriptionFailed(false);
-    setVoiceMessage("Turning your audio into text...");
-    const controller = new AbortController();
-    transcriptionAbortRef.current = controller;
-    const timeout = setTimeout(() => controller.abort(), 100000);
-    try {
-      if (!audio.size) throw new Error("The recording was empty. Please try again.");
-      if (audio.size > 10 * 1024 * 1024) throw new Error("Please record a shorter thought under 10 MB.");
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) throw new Error("Please sign in first.");
-      if (!connectedWorkspace) throw new Error("Choose your team before recording.");
-      if (!signedInUser || data.session.user.id !== signedInUser.id) {
-        throw new Error("Your account changed. Sign out and sign in again before recording.");
-      }
-      if (!mountedRef.current) return;
-      const extension = audio.type.includes("mp4") ? "mp4" : "webm";
-      const form = new FormData();
-      form.append("file", audio, originalName || `hush-recording.${extension}`);
-      const response = await fetch("/api/transcribe", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${data.session.access_token}`,
-          "X-Hush-Workspace-Id": connectedWorkspace.id,
-        },
-        body: form,
-        signal: controller.signal,
-      });
-      if (response.status === 413) throw new Error("This recording is too large to upload. Try a shorter recording.");
-      const result = await response.json().catch(() => null);
-      if (!mountedRef.current) return;
-      if (!response.ok) throw new Error([result?.message || "Could not transcribe the recording.", result?.code].filter(Boolean).join("\n"));
-      if (typeof result?.text !== "string" || !result.text.trim()) throw new Error("Could not read the transcript. Please try again.");
-      setNoteText((previous) => previous.trim() ? `${previous.trim()}\n\n${result.text.trim()}` : result.text.trim());
-      setVoiceMessage("Your transcript is in the note box. Review it, then save and analyze.");
-    } catch (error) {
-      if (!mountedRef.current) return;
-      setTranscriptionFailed(true);
-      setVoiceMessage(error instanceof Error && error.name !== "AbortError"
-        ? error.message : "Transcription timed out. Your recording is still available below.");
-    } finally {
-      clearTimeout(timeout);
-      if (transcriptionAbortRef.current === controller) transcriptionAbortRef.current = null;
-      actionRef.current = false;
-      if (mountedRef.current) setIsTranscribing(false);
-    }
-  };
-
-  const startRecording = async () => {
-    if (actionRef.current) return;
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      setVoiceMessage("Microphone recording is unavailable here. Open HUSH over HTTPS in a browser that supports recording.");
-      return;
-    }
-    const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
-      .find((type) => MediaRecorder.isTypeSupported(type));
-    if (!mimeType) {
-      setVoiceMessage("This browser cannot record a supported format. Try Firefox or Chrome.");
-      return;
-    }
-    actionRef.current = true;
-    setIsPreparingRecording(true);
-    setVoiceMessage("Allow microphone access to begin recording.");
-    try {
-      const { data, error } = await supabase.auth.getUser();
-      if (error || !data.user) throw new Error("Please sign in first.");
-      if (!mountedRef.current) return;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!mountedRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-      streamRef.current = stream;
-      const recorder = new MediaRecorder(stream, { mimeType });
-      recorderRef.current = recorder;
-      const chunks: Blob[] = [];
-      let bytes = 0;
-      recorder.ondataavailable = (event) => {
-        if (event.data.size) {
-          chunks.push(event.data);
-          bytes += event.data.size;
-        }
-        if (bytes > 9 * 1024 * 1024 && recorder.state === "recording") recorder.stop();
-      };
-      recorder.onstop = () => {
-        const audio = new Blob(chunks, { type: recorder.mimeType || mimeType });
-        releaseMicrophone();
-        if (!mountedRef.current) return;
-        setIsRecording(false);
-        setRecording(audio);
-        void transcribeRecording(audio);
-      };
-      recorder.onerror = () => {
-        recorder.onstop = null;
-        recorder.ondataavailable = null;
-        if (recorder.state !== "inactive") recorder.stop();
-        releaseMicrophone();
-        actionRef.current = false;
-        if (!mountedRef.current) return;
-        setIsRecording(false);
-        setVoiceMessage("The recording stopped unexpectedly. Please try again.");
-      };
-      beginNewNote();
-      recorder.start(1000);
-      setRecording(null);
-      setTranscriptionFailed(false);
-      setIsRecording(true);
-      setVoiceMessage("Recording. Speak naturally, then press Stop recording. Maximum 2 minutes for this test.");
-      recordingTimerRef.current = setTimeout(() => {
-        if (recorder.state === "recording") recorder.stop();
-      }, 120000);
-    } catch (error) {
-      releaseMicrophone();
-      actionRef.current = false;
-      if (!mountedRef.current) return;
-      const denied = error instanceof DOMException && error.name === "NotAllowedError";
-      setVoiceMessage(denied
-        ? "Microphone access was denied. Allow microphone access in your browser, then try again."
-        : error instanceof Error ? error.message : "Could not start recording. Please try again.");
-    } finally {
-      if (mountedRef.current) setIsPreparingRecording(false);
-    }
-  };
-
-  const stopRecording = () => {
-    const recorder = recorderRef.current;
-    if (recorder?.state === "recording") recorder.stop();
-  };
+  const {
+    isPreparingRecording, isRecording, isTranscribing, recording, recordingUrl, voiceMessage,
+    transcriptionFailed, startRecording, stopRecording, retryTranscription, resetRecording,
+  } = useVoiceRecording({
+    workspaceId: connectedWorkspace?.id,
+    userId: signedInUser?.id,
+    actionRef,
+    onRecordingStart: beginNewNote,
+    onTranscript: (text) => setNoteText(previous => previous.trim() ? `${previous.trim()}\n\n${text}` : text),
+    transcriptMessage: "Your transcript is in the note box. Review it, then save and analyze.",
+  });
+  const busy = isSaving || isAnalyzing || isSending || isPreparingRecording || isRecording || isTranscribing || isSavingName;
 
   const notionLink = (id: string) =>
     `https://www.notion.so/${id.replace(/-/g, "")}`;
@@ -793,7 +626,7 @@ export default function Home() {
           <input id="sign-in-name" type="text" autoComplete="given-name" placeholder="e.g. Kayra or Neyzen"
             maxLength={80} disabled={isSigningIn} value={nameDraft} onChange={(event) => setNameDraft(event.target.value)}
             className="mx-auto mt-2 block w-full border border-white bg-black px-4 py-3 text-white" />
-          <p className="mt-2 text-left text-xs leading-relaxed text-gray-400">Your first name is enough. If you've already saved one, you can leave this blank.</p>
+          <p className="mt-2 text-left text-xs leading-relaxed text-gray-400">Your first name is enough. If you&apos;ve already saved one, you can leave this blank.</p>
           <input type="email" autoComplete="email" aria-label="Email" placeholder="Email" required
             disabled={isSigningIn} value={email} onChange={(event) => setEmail(event.target.value)}
             className="mx-auto mt-6 block w-full border border-white bg-black px-4 py-3 text-white" />
@@ -836,8 +669,8 @@ export default function Home() {
               if ((noteText.trim() || savedNoteId || recording || deliveryUncertain) &&
                 !window.confirm("Switch teams and clear this note? If delivery was uncertain, check the Notion task before sending it again.")) return;
               setNoteText(""); setSavedNoteId(null); setSavedNoteText(""); setMatchResult(null);
-              setClarification(""); setDelivery(null); setNoteFeedback(null); setDeliveryUncertain(false); setRecording(null);
-              setVoiceMessage(""); setTranscriptionFailed(false); setConnectedWorkspace(null);
+              setClarification(""); setDelivery(null); setNoteFeedback(null); setDeliveryUncertain(false);
+              resetRecording(); setConnectedWorkspace(null);
             }}>Switch team</button>}
             <button type="button" disabled={busy} onClick={() => {
               setNameDraft(displayName);
@@ -868,8 +701,7 @@ export default function Home() {
                 setDelivery(null);
                 setNoteFeedback(null);
                 setDeliveryUncertain(false);
-                setRecording(null);
-                setVoiceMessage("");
+                resetRecording();
                 setPassword("");
                 setShowLanding(true);
               } catch { alert("We couldn't sign you out. Please try again."); }
@@ -881,7 +713,7 @@ export default function Home() {
           <section aria-labelledby="name-heading" className="mx-auto mt-8 max-w-2xl rounded-2xl border border-[#D9DDD8] p-5">
             <h2 id="name-heading" className="text-lg font-semibold">What name should your team see?</h2>
             <p className="mt-2 text-sm leading-relaxed text-gray-600">
-              We'll add this name to the updates you share in Notion, alongside your account email. It won't change who owns a task.
+              We&apos;ll add this name to the updates you share in Notion, alongside your account email. It won&apos;t change who owns a task.
             </p>
             <form onSubmit={(event) => { event.preventDefault(); void saveDisplayName(); }} className="mt-4">
               <label htmlFor="display-name" className="block text-sm">Your name</label>
@@ -937,11 +769,7 @@ export default function Home() {
               <audio controls src={recordingUrl} className="mt-3 w-full" />
               <a href={recordingUrl} download={recording instanceof File ? recording.name : `hush-recording.${recording?.type.includes("mp4") ? "mp4" : "webm"}`}
                 className="mt-3 inline-block text-sm underline">Download recording</a>
-              {transcriptionFailed && <button type="button" disabled={busy} onClick={() => {
-                if (!recording || actionRef.current) return;
-                actionRef.current = true;
-                void transcribeRecording(recording, recording instanceof File ? recording.name : undefined);
-              }} className="mt-3 ml-4 rounded-full border border-black px-4 py-2 text-sm disabled:opacity-50">Try transcription again</button>}
+              {transcriptionFailed && <button type="button" disabled={busy} onClick={retryTranscription} className="mt-3 ml-4 rounded-full border border-black px-4 py-2 text-sm disabled:opacity-50">Try transcription again</button>}
             </div>}
             </div>}
             <label htmlFor="note-text" className="mt-6 block text-left text-sm font-semibold">
@@ -1074,7 +902,7 @@ export default function Home() {
               userId={signedInUser.id} currentNoteId={savedNoteId} version={historyVersion} />
           )}
           {signedInUser && <TeamUpdates key={`updates:${connectedWorkspace.id}:${signedInUser.id}`}
-            workspaceId={connectedWorkspace.id} userId={signedInUser.id} />}
+            workspaceId={connectedWorkspace.id} userId={signedInUser.id} actionRef={actionRef} />}
           {signedInUser && <ReminderControls key={connectedWorkspace.id} workspaceId={connectedWorkspace.id} userId={signedInUser.id} />}
         </section>
         <footer className="border-t border-[#E2E6E0] py-6 text-center text-xs text-[#626A62]">Kayra Irmak Tan, 2026</footer>
