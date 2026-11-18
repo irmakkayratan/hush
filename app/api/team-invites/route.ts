@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
+import { readRequestBody, RequestBodyTooLarge } from "@/lib/read-request-body";
 
 const digest = (token: string) => createHash("sha256").update(token).digest("hex");
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -7,14 +8,16 @@ const reply = (message: string, status: number) =>
   Response.json({ message }, { status, headers: { "Cache-Control": "no-store" } });
 
 export async function POST(request: Request) {
-  if (process.env.NODE_ENV !== "development") return new Response("Not found", { status: 404 });
   const bearer = request.headers.get("Authorization")?.match(/^Bearer\s+(\S+)$/i);
   if (!bearer) return reply("Sign in first.", 401);
   try {
     const admin = createSupabaseAdminClient();
     const { data: { user }, error } = await admin.auth.getUser(bearer[1]);
     if (error || !user) return reply("Sign in again.", 401);
-    const body = await request.json().catch(() => null);
+    let body;
+    try { body = await readRequestBody(request, 4 * 1024).json(); } catch (error) {
+      return reply("Invalid invitation request.", error instanceof RequestBodyTooLarge ? 413 : 400);
+    }
 
     if (body?.action === "create") {
       const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";

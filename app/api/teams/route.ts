@@ -1,8 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
+import { readRequestBody, RequestBodyTooLarge } from "@/lib/read-request-body";
 
 export async function POST(request: Request) {
-  if (process.env.NODE_ENV !== "development") return new Response("Not found", { status: 404 });
   try {
     const authorization = request.headers.get("Authorization")?.match(/^Bearer\s+(\S+)$/i);
     if (!authorization) return Response.json({ message: "Please sign in first." }, { status: 401 });
@@ -12,8 +12,11 @@ export async function POST(request: Request) {
     const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
     const { data, error } = await client.auth.getUser(authorization[1]);
     if (error || !data.user) return Response.json({ message: "Please sign in again." }, { status: 401 });
+    if (!data.user.email_confirmed_at) return Response.json({ message: "Verify your email before creating a team." }, { status: 403 });
     let body;
-    try { body = await request.json(); } catch { return Response.json({ message: "Invalid request." }, { status: 400 }); }
+    try { body = await readRequestBody(request, 4 * 1024).json(); } catch (error) {
+      return Response.json({ message: "Invalid team request." }, { status: error instanceof RequestBodyTooLarge ? 413 : 400 });
+    }
     if (!body || typeof body.name !== "string" || typeof body.workspaceId !== "string" ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.workspaceId)) {
       return Response.json({ message: "Enter a valid team name." }, { status: 400 });

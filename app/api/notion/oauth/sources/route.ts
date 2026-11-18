@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireWorkspaceAccess, WorkspaceAccessError } from "@/lib/workspace-access";
+import { readRequestBody, RequestBodyTooLarge } from "@/lib/read-request-body";
 import { notionOAuthConfig, openPendingNotionGrant, OAUTH_PENDING_COOKIE } from "@/lib/notion-oauth";
 import { encryptNotionToken } from "@/lib/notion-crypto";
 
@@ -24,7 +25,6 @@ function failure(error: unknown) {
   return NextResponse.json({ message: error instanceof WorkspaceAccessError ? error.message : "This connection setup expired or could not be completed. Start again." }, { status: error instanceof WorkspaceAccessError ? error.status : 409, headers: { "Cache-Control": "no-store" } });
 }
 export async function GET(request: NextRequest) {
-  if (process.env.NODE_ENV !== "development") return new Response("Not found", { status: 404 });
   try {
     const { grant, access } = await context(request);
     const cursor = request.nextUrl.searchParams.get("cursor");
@@ -62,13 +62,12 @@ export async function GET(request: NextRequest) {
   } catch (error) { return failure(error); }
 }
 export async function POST(request: NextRequest) {
-  if (process.env.NODE_ENV !== "development") return new Response("Not found", { status: 404 });
   try {
     const config = notionOAuthConfig();
     if (request.headers.get("Origin") !== config.origin) throw new WorkspaceAccessError("Save the connection from HUSH.", 403);
     const { grant, access } = await context(request);
     let body;
-    try { body = await request.json(); } catch { throw new WorkspaceAccessError("Invalid request.", 400); }
+    try { body = await readRequestBody(request, 16 * 1024).json(); } catch (error) { throw new WorkspaceAccessError("Invalid request.", error instanceof RequestBodyTooLarge ? 413 : 400); }
     if (!body || !Array.isArray(body.sources) || body.sources.length < 1 || body.sources.length > 20) throw new WorkspaceAccessError("Select between 1 and 20 task sources.", 400);
     const existing = await access.admin.rpc("hush_get_notion_connection", { p_workspace_id: access.workspaceId, p_user_id: access.user.id });
     if (existing.error) throw new Error("Connection lookup failed");

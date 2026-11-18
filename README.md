@@ -44,7 +44,7 @@ You need Node.js 22 or newer, a Supabase project, a Notion public integration an
 
 ## Run a production build
 
-Use a Node.js web service and set the same environment values there. When using the same Supabase project, use the same Notion integration credentials and token encryption key as your development setup. The repository supports local team and Notion setup through the development server. The production app uses those existing teams and connections.
+Use a Node.js web service and set the same environment values there. When using the same Supabase project, use the same Notion integration credentials and token encryption key as your development setup. The hosted app supports team creation, email-verified invitations, and manager-controlled Notion connections.
 
 ```sh
 npm ci
@@ -55,6 +55,14 @@ npm start
 Set up HTTPS for access from an iPhone. The server must accept multipart requests up to 12 MiB for 10 MiB audio recordings.
 
 To enable **Forgot password?**, add your app’s exact `/reset-password` URL under **Authentication → URL Configuration → Redirect URLs** in Supabase. For local testing, add `http://localhost:3000/reset-password`. Use the default **Reset password** email template, or keep its `{{ .ConfirmationURL }}` link if you customize it. Supabase’s built-in email service is limited to project team members. Configure [custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp) to deliver reset emails to other users.
+
+## Set up a team on the hosted app
+
+1. Open **Create a team**, sign in or create an account, and verify your email if prompted.
+2. Create the team and open **Connect Notion**. Grant access to the team task lists and confirm the title and status fields.
+3. From **Team updates → Team invitations**, create a link for each member’s email. The member signs in or creates a verified HUSH account with that email, then accepts the link.
+
+To enable Notion OAuth, set `NOTION_OAUTH_REDIRECT_URI` to the public HTTPS address followed by `/api/notion/oauth/callback` and register that exact callback in the Notion integration’s settings.
 
 ## Host HUSH independently of your laptop
 

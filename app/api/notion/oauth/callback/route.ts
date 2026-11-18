@@ -6,7 +6,6 @@ import {
 } from "@/lib/notion-oauth";
 
 export async function GET(request: NextRequest) {
-  if (process.env.NODE_ENV !== "development") return new Response("Not found", { status: 404 });
   let config;
   try { config = notionOAuthConfig(); } catch {
     return new Response("Notion OAuth settings are missing or invalid.", { status: 503 });

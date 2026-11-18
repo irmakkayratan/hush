@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
+import Link from "next/link";
 import { disableTeamNotifications, teamUpdateRequest } from "@/lib/team-updates-client";
 import { useVoiceRecording } from "./use-voice-recording";
 
@@ -199,6 +200,13 @@ export default function TeamUpdates({ workspaceId, userId, actionRef }: {
             }}>Disable notifications</button>
           </div>
         </details>
+      )}
+      {data?.canManage && (
+        <nav aria-label="Team management" className="mt-3 flex flex-wrap gap-4 text-sm">
+          <Link className="underline" href={`/connect-notion?workspaceId=${encodeURIComponent(workspaceId)}`}>Connect Notion</Link>
+          <Link className="underline" href={`/team-invites?team=${encodeURIComponent(workspaceId)}`}>Team invitations</Link>
+          <Link className="underline" href="/create-team">Create a team</Link>
+        </nav>
       )}
       {data?.canManage && (
         <details className="mt-3 rounded-2xl border border-[#E2E6E0] p-4">

@@ -1,7 +1,9 @@
 "use client";
+import Link from "next/link";
 
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import HushAccountForm from "../hush-account-form";
 
 type Team = { id: string; name: string };
 export default function TeamInvites() {
@@ -11,6 +13,7 @@ export default function TeamInvites() {
   const [email, setEmail] = useState("");
   const [account, setAccount] = useState("");
   const [ready, setReady] = useState(false);
+  const [sessionVersion, setSessionVersion] = useState(0);
   const [message, setMessage] = useState("");
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
@@ -19,10 +22,10 @@ export default function TeamInvites() {
   useEffect(() => {
     let live = true;
     const invite = new URLSearchParams(window.location.hash.slice(1)).get("invite");
-    setToken(invite);
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!live) return;
+      setToken(invite);
       setAccount(user?.email || "");
       if (!user || invite) return;
       const memberships = await supabase.from("memberships").select("workspace_id")
@@ -42,13 +45,13 @@ export default function TeamInvites() {
     void load().catch(() => { if (live) setMessage("Could not load your teams. Refresh and try again."); })
       .finally(() => { if (live) setReady(true); });
     return () => { live = false; };
-  }, []);
+  }, [sessionVersion]);
   async function submit() {
     if (lock.current) return;
     lock.current = true; setBusy(true); setMessage(""); setLink("");
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { setMessage("Open HUSH, sign in, then return here and refresh."); return; }
+      if (!session) { setAccount(""); setMessage("Sign in to continue."); return; }
       const response = await fetch("/api/team-invites", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
@@ -65,12 +68,11 @@ export default function TeamInvites() {
     } catch { setMessage("Could not complete the request. Please try again."); }
     finally { lock.current = false; setBusy(false); }
   }
-  if (process.env.NODE_ENV !== "development") return null;
   return <main className="mx-auto min-h-screen max-w-lg space-y-5 bg-white px-6 py-16 text-black">
-    <a href="/" className="text-sm underline">Back to HUSH</a>
+    <Link href="/" className="text-sm underline">Back to HUSH</Link>
     <h1 className="text-3xl font-semibold">{token ? "Join a team" : "Invite someone"}</h1>
     {!ready ? <p>Loading…</p> : !account ?
-      <p><a href="/" target="_blank" rel="noopener noreferrer" className="underline">Sign in to HUSH</a>, then return to this tab and refresh.</p> :
+      <HushAccountForm onSignedIn={() => setSessionVersion(value => value + 1)} /> :
       <>
         <p className="break-words text-sm text-gray-600">Signed in as {account}</p>
         {joined ? <p role="status">You joined {joined}. Return to HUSH to open your team.</p> : token ?
