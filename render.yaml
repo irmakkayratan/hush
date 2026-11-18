@@ -24,5 +24,7 @@ services:
         sync: false
       - key: NOTION_OAUTH_CLIENT_SECRET
         sync: false
+      - key: NOTION_OAUTH_REDIRECT_URI
+        sync: false
       - key: NEXT_PUBLIC_HUSH_PUSH_PUBLIC_KEY
         sync: false

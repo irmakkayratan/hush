@@ -1,12 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireWorkspaceAccess, WorkspaceAccessError } from "@/lib/workspace-access";
+import { readRequestBody, RequestBodyTooLarge } from "@/lib/read-request-body";
 import { createNotionOAuthState, notionOAuthConfig, OAUTH_COOKIE } from "@/lib/notion-oauth";
 
 export async function POST(request: Request) {
-  // Keep the unfinished connection flow local until callback and source selection are tested.
-  if (process.env.NODE_ENV !== "development") {
-    return new Response("Not found", { status: 404 });
-  }
   try {
     const config = notionOAuthConfig();
     if (request.headers.get("Origin") !== config.origin) {
@@ -14,9 +11,9 @@ export async function POST(request: Request) {
     }
     let body;
     try {
-      body = await request.json();
-    } catch {
-      return Response.json({ message: "Invalid request." }, { status: 400 });
+      body = await readRequestBody(request, 4 * 1024).json();
+    } catch (error) {
+      return Response.json({ message: "Invalid request." }, { status: error instanceof RequestBodyTooLarge ? 413 : 400 });
     }
     if (!body || typeof body.workspaceId !== "string") {
       return Response.json({ message: "Choose a workspace first." }, { status: 400 });

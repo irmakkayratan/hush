@@ -594,6 +594,7 @@ export default function Home() {
           {workspaces.map(team => <button key={team.id} type="button" disabled={isSigningIn} onClick={() => setConnectedWorkspace(team)}
             className="block w-full rounded-xl border border-black px-5 py-4 text-left">{team.name}</button>)}
         </div>
+        <Link href="/create-team" className="mt-6 block text-sm underline">Create a team</Link>
         <button type="button" className="mt-6 text-sm text-gray-500" onClick={async () => {
           if (actionRef.current) return;
           actionRef.current = true;
@@ -641,6 +642,7 @@ export default function Home() {
             {isSigningIn ? "Opening your workspace..." : "Sign in"}
           </button>
         </form>
+        <Link href="/create-team" className="mt-5 inline-block text-sm text-gray-300 underline">Create a team</Link>
       </div>
     </main>
   );
@@ -659,10 +661,6 @@ export default function Home() {
               </p>
             </details>
             <span className="text-xs text-gray-500">{signedInUser?.email}</span>
-            {process.env.NODE_ENV === "development" && (
-              <a href={`/team-invites?team=${encodeURIComponent(connectedWorkspace.id)}`}
-                target="_blank" rel="noopener noreferrer" className="text-xs underline">Team invitations</a>
-            )}
             <div className="rounded-full border border-[#D9DDD8] px-4 py-2 text-xs">{connectedWorkspace.name}</div>
             {workspaces.length > 1 && <button type="button" disabled={busy} className="text-xs text-gray-500 disabled:opacity-50" onClick={() => {
               if (actionRef.current) return;

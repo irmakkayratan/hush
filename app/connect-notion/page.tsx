@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
@@ -20,8 +21,9 @@ export default function ConnectNotionPage() {
   const [choosing, setChoosing] = useState(false);
   const [saved, setSaved] = useState(false);
   const [connection, setConnection] = useState<{ workspaceId: string; status: ConnectionStatus } | null>(null);
-  const [connectionError, setConnectionError] = useState("");
+  const [connectionError, setConnectionError] = useState<{ workspaceId: string; message: string } | null>(null);
   const currentStatus = connection?.workspaceId === workspaceId ? connection.status : null;
+  const currentError = connectionError?.workspaceId === workspaceId ? connectionError.message : "";
   const fieldClass = "w-full rounded-lg border border-neutral-300 bg-white px-3 py-2";
   async function token() {
     const { data, error } = await supabase.auth.getSession();
@@ -45,10 +47,11 @@ export default function ConnectNotionPage() {
   useEffect(() => {
     let active = true;
     const status = new URLSearchParams(window.location.search).get("oauth");
-    if (status === "select_sources") { void loadSources(); return; }
-    if (status) setMessage(status === "cancelled" ? "Notion connection cancelled. You can start again." : "The connection could not be completed. Start again from this page.");
     void (async () => {
       const { data: auth } = await supabase.auth.getSession();
+      if (!active) return;
+      if (status === "select_sources" && auth.session) { await loadSources(); return; }
+      if (status) setMessage(status === "cancelled" ? "Notion connection cancelled. You can start again." : "The connection could not be completed. Start again from this page.");
       if (!auth.session) { if (active) setMessage("Sign in to HUSH first, then return to this page."); return; }
       const memberships = await supabase.from("memberships").select("workspace_id").eq("user_id", auth.session.user.id).eq("role", "pm");
       if (memberships.error) { if (active) setMessage("Could not load your teams."); return; }
@@ -69,7 +72,6 @@ export default function ConnectNotionPage() {
   useEffect(() => {
     if (!workspaceId || choosing) return;
     const controller = new AbortController();
-    setConnectionError("");
     void (async () => {
       try {
         const response = await fetch(`/api/notion/management?workspaceId=${encodeURIComponent(workspaceId)}`, {
@@ -78,9 +80,12 @@ export default function ConnectNotionPage() {
         });
         const status = await response.json();
         if (!response.ok) throw new Error(status.message || "Could not load the connection.");
-        if (!controller.signal.aborted) setConnection({ workspaceId, status });
+        if (!controller.signal.aborted) {
+          setConnection({ workspaceId, status });
+          setConnectionError(null);
+        }
       } catch (error) {
-        if (!controller.signal.aborted) setConnectionError(error instanceof Error ? error.message : "Could not load the connection.");
+        if (!controller.signal.aborted) setConnectionError({ workspaceId, message: error instanceof Error ? error.message : "Could not load the connection." });
       }
     })();
     return () => controller.abort();
@@ -98,10 +103,11 @@ export default function ConnectNotionPage() {
       const status = await response.json();
       if (!response.ok) throw new Error(status.message || "Could not disconnect Notion.");
       setConnection({ workspaceId, status });
+      setConnectionError(null);
       setMessage(`Notion disconnected from ${team}.`);
     } catch (error) {
       setConnection(null);
-      setConnectionError(error instanceof Error ? error.message : "Could not confirm disconnection. Reload to check.");
+      setConnectionError({ workspaceId, message: error instanceof Error ? error.message : "Could not confirm disconnection. Reload to check." });
     } finally { lock.current = false; setBusy(false); }
   }
   async function start() {
@@ -136,15 +142,14 @@ export default function ConnectNotionPage() {
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not confirm the result. Check before trying again."); }
     finally { lock.current = false; setBusy(false); }
   }
-  if (process.env.NODE_ENV !== "development") return null;
   return <main className="min-h-screen bg-white px-6 py-14 text-black"><div className="mx-auto max-w-2xl space-y-6">
     <h1 className="text-3xl font-semibold">Connect Notion</h1>
     <p className="leading-7 text-neutral-600">Choose which task lists HUSH can use for your team. In Notion, share only the pages and databases your team needs.</p>
     {!choosing && !saved && <div className="space-y-4">
       <label className="block">HUSH team<select className={fieldClass} value={workspaceId} onChange={event => setWorkspaceId(event.target.value)} disabled={busy}>{workspaces.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label>
       {workspaceId && <div className="space-y-2 rounded-xl border border-neutral-200 p-4" aria-live="polite">
-        <p className="font-semibold">{connectionError ? "Could not check connection" : !currentStatus ? "Checking connection…" : !currentStatus.connected ? "Not connected" : currentStatus.expired ? "Reconnect required" : "Connection saved"}</p>
-        {connectionError && <p className="text-sm text-neutral-600">{connectionError}</p>}
+        <p className="font-semibold">{currentError ? "Could not check connection" : !currentStatus ? "Checking connection…" : !currentStatus.connected ? "Not connected" : currentStatus.expired ? "Reconnect required" : "Connection saved"}</p>
+        {currentError && <p className="text-sm text-neutral-600">{currentError}</p>}
         {currentStatus?.connected && <>
           {currentStatus.notionWorkspace && <p>{currentStatus.notionWorkspace}</p>}
           <p className="text-sm text-neutral-600">{currentStatus.sources?.length ? `Task lists: ${currentStatus.sources.join(", ")}` : "No enabled task lists."}</p>
@@ -165,11 +170,11 @@ export default function ConnectNotionPage() {
       </section>)}
       {cursor && <button disabled={busy} onClick={() => void loadSources(cursor)} className="underline">Load more sources</button>}
       {!sources.length && <button disabled={busy} onClick={() => void loadSources()} className="underline">Refresh sources</button>}
-      {existing && <label className="flex items-start gap-3"><input type="checkbox" disabled={busy} checked={replace} onChange={event => setReplace(event.target.checked)} />Replace this team's current Notion connection and source list with my selections.</label>}
+      {existing && <label className="flex items-start gap-3"><input type="checkbox" disabled={busy} checked={replace} onChange={event => setReplace(event.target.checked)} />Replace this team&apos;s current Notion connection and source list with my selections.</label>}
       <button disabled={busy || !Object.keys(selected).length || (existing && !replace)} onClick={save} className="rounded-full bg-black px-6 py-3 text-white disabled:opacity-50">{busy ? "Working…" : "Save connection"}</button>
     </div>}
     {saved && <a href={`/connect-notion?workspaceId=${encodeURIComponent(workspaceId)}`} className="block underline">Manage connection</a>}
     {message && <p role="status" className="leading-7">{message}</p>}
-    <a href="/" className="block underline">Back to HUSH</a>
+    <Link href="/" className="block underline">Back to HUSH</Link>
   </div></main>;
 }
