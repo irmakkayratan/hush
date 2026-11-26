@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { disableTeamNotifications } from "@/lib/team-updates-client";
 import ReminderControls from "./reminder-controls";
 import TeamUpdates from "./team-updates";
+import NotionConnectionNotice from "./notion-connection-notice";
 import { useVoiceRecording } from "./use-voice-recording";
 
 type TaskDate = {
@@ -167,6 +168,7 @@ function SavedNotes({ workspace, userId, currentNoteId, version }: {
 
 export default function Home() {
   const actionRef = useRef(false);
+  const requestedTeamOpened = useRef(false);
   const [showLanding, setShowLanding] = useState(true);
   const [connectedWorkspace, setConnectedWorkspace] = useState<{ id: string; name: string } | null>(null);
   const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]);
@@ -214,7 +216,7 @@ export default function Home() {
   const notionLink = (id: string) =>
     `https://www.notion.so/${id.replace(/-/g, "")}`;
 
-  const openWorkspace = async (withPassword = false) => {
+  const openWorkspace = useCallback(async (withPassword = false) => {
     if (isSigningIn || actionRef.current) return;
     if (!withPassword && signedInUser) { setShowLanding(false); return; }
     actionRef.current = true;
@@ -263,7 +265,8 @@ export default function Home() {
       const available = (teams ?? []).map(team => ({ id: team.id, name: team.name || "Your workspace" }));
       setSignedInUser({ id: userData.user.id, email: userData.user.email || "" });
       setWorkspaces(available);
-      setConnectedWorkspace(available.length === 1 ? available[0] : null);
+      const requestedTeam = new URLSearchParams(window.location.search).get("workspaceId");
+      setConnectedWorkspace(available.find(team => team.id === requestedTeam) || (available.length === 1 ? available[0] : null));
     } catch (error) {
       alert(error instanceof Error ? error.message : "We couldn't sign you in. Please try again.");
     } finally {
@@ -271,7 +274,15 @@ export default function Home() {
       setIsSigningIn(false);
       setShowLanding(false);
     }
-  };
+  }, [isSigningIn, signedInUser, email, password, nameDraft]);
+
+  useEffect(() => {
+    const requestedTeam = new URLSearchParams(window.location.search).get("workspaceId");
+    if (requestedTeam && !requestedTeamOpened.current) {
+      requestedTeamOpened.current = true;
+      void openWorkspace();
+    }
+  }, [openWorkspace]);
 
   const saveDisplayName = async () => {
     if (actionRef.current) return;
@@ -735,6 +746,7 @@ export default function Home() {
           <p className="mx-auto mt-6 max-w-md text-lg leading-relaxed text-[#626A62]">
             Tell us what you&apos;ve been working on, or write it down, and we&apos;ll help find the right task.
           </p>
+          <NotionConnectionNotice key={connectedWorkspace.id} workspaceId={connectedWorkspace.id} teamName={connectedWorkspace.name} />
           <div className="mt-12 rounded-[32px] border border-[#E2E6E0] bg-white p-8 shadow-sm">
             <h2 className="mt-6 text-xl font-semibold">What would you like your team to know?</h2>
             <p className="mt-3 text-sm text-gray-500">Choose how you want to add your note.</p>
