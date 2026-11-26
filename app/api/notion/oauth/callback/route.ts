@@ -10,9 +10,11 @@ export async function GET(request: NextRequest) {
   try { config = notionOAuthConfig(); } catch {
     return new Response("Notion OAuth settings are missing or invalid.", { status: 503 });
   }
+  let workspaceId: string | undefined;
   const finish = (status: string, pending?: string) => {
     const destination = new URL("/connect-notion", config.origin);
     destination.searchParams.set("oauth", status);
+    if (workspaceId) destination.searchParams.set("workspaceId", workspaceId);
     const response = NextResponse.redirect(destination, 303);
     response.headers.set("Cache-Control", "no-store");
     response.headers.set("Referrer-Policy", "no-referrer");
@@ -25,6 +27,7 @@ export async function GET(request: NextRequest) {
     const state = request.nextUrl.searchParams.get("state") || "";
     const cookie = request.cookies.get(OAUTH_COOKIE)?.value || "";
     const context = verifyNotionOAuthState(cookie, state);
+    workspaceId = context.workspaceId;
     if (request.nextUrl.searchParams.has("error")) return finish("cancelled");
     const code = request.nextUrl.searchParams.get("code");
     if (!code || code.length > 4096) return finish("invalid");

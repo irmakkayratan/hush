@@ -26,7 +26,17 @@ function failure(error: unknown) {
 }
 export async function GET(request: NextRequest) {
   try {
+    const resume = request.nextUrl.searchParams.get("resume") === "1";
+    const pending = request.cookies.get(OAUTH_PENDING_COOKIE)?.value;
+    if (resume && !pending) {
+      return NextResponse.json({ pending: false }, { headers: { "Cache-Control": "no-store" } });
+    }
     const { grant, access } = await context(request);
+    const requestedTeam = request.nextUrl.searchParams.get("workspaceId");
+    if (requestedTeam && requestedTeam.toLowerCase() !== access.workspaceId.toLowerCase()) {
+      if (resume) return NextResponse.json({ pending: false }, { headers: { "Cache-Control": "no-store" } });
+      throw new WorkspaceAccessError("Finish connecting the HUSH team that started this setup.", 409);
+    }
     const cursor = request.nextUrl.searchParams.get("cursor");
     if (cursor && cursor.length > 500) return NextResponse.json({ message: "Invalid cursor." }, { status: 400 });
     const result = await notion(grant.accessToken, "search", { filter: { property: "object", value: "data_source" }, page_size: 50, ...(cursor ? { start_cursor: cursor } : {}) });
@@ -58,7 +68,9 @@ export async function GET(request: NextRequest) {
       name: source.title?.map(t => t.plain_text).join("") || "Untitled",
       properties: Object.entries(source.properties || {}).map(([name, p]) => ({ id: p.id, name: name || "Title", type: p.type })),
     }));
-    return NextResponse.json({ workspaceId: access.workspaceId, notionWorkspaceName: grant.notionWorkspaceName, hasExistingConnection: Boolean(existing.data), sources, nextCursor: result.has_more ? result.next_cursor : null }, { headers: { "Cache-Control": "no-store" } });
+    const team = await access.admin.from("workspaces").select("name").eq("id", access.workspaceId).single();
+    if (team.error) throw new Error("Could not load the HUSH team");
+    return NextResponse.json({ pending: true, workspaceId: access.workspaceId, teamName: team.data.name, notionWorkspaceName: grant.notionWorkspaceName, hasExistingConnection: Boolean(existing.data), sources, nextCursor: result.has_more ? result.next_cursor : null }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return failure(error); }
 }
 export async function POST(request: NextRequest) {

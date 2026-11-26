@@ -1,15 +1,57 @@
 "use client";
-import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { supabase } from "@/lib/supabase";
 
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import HushAccountForm from "../hush-account-form";
+
+type Team = { id: string; name: string };
 type ConnectionStatus = { connected: boolean; notionWorkspace?: string; expired?: boolean; sources?: string[] };
 type Property = { id: string; name: string; type: string };
 type Source = { id: string; name: string; properties: Property[] };
 type Selection = { id: string; titlePropertyId: string; statusPropertyId: string; datePropertyId: string; dateIsDeadline: boolean };
+type SourceResult = {
+  pending: boolean;
+  workspaceId: string;
+  teamName: string;
+  notionWorkspaceName: string | null;
+  hasExistingConnection: boolean;
+  sources: Source[];
+  nextCursor: string | null;
+};
+
+async function token() {
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session) throw new Error("Sign in with the HUSH account that started this connection.");
+  return data.session.access_token;
+}
+
+async function fetchSources(workspaceId: string, next?: string, resume = false, signal?: AbortSignal): Promise<SourceResult> {
+  const params = new URLSearchParams();
+  if (workspaceId) params.set("workspaceId", workspaceId);
+  if (next) params.set("cursor", next);
+  if (resume) params.set("resume", "1");
+  const response = await fetch(`/api/notion/oauth/sources?${params}`, {
+    headers: { Authorization: `Bearer ${await token()}` }, cache: "no-store", signal,
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Could not load your Notion task lists. Try again.");
+  return data;
+}
+
+function defaultSelection(source: Source): Selection {
+  return {
+    id: source.id,
+    titlePropertyId: source.properties.find(property => property.type === "title")?.id || "",
+    statusPropertyId: source.properties.find(property => property.type === "status")?.id || "",
+    datePropertyId: "",
+    dateIsDeadline: false,
+  };
+}
+
 export default function ConnectNotionPage() {
   const lock = useRef(false);
-  const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]);
+  const [workspaces, setWorkspaces] = useState<Team[]>([]);
   const [workspaceId, setWorkspaceId] = useState("");
   const [sources, setSources] = useState<Source[]>([]);
   const [selected, setSelected] = useState<Record<string, Selection>>({});
@@ -17,85 +59,137 @@ export default function ConnectNotionPage() {
   const [replace, setReplace] = useState(false);
   const [cursor, setCursor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [signedIn, setSignedIn] = useState(false);
+  const [sessionVersion, setSessionVersion] = useState(0);
   const [message, setMessage] = useState("");
   const [choosing, setChoosing] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [savedCount, setSavedCount] = useState(0);
+  const [notionWorkspace, setNotionWorkspace] = useState<string | null>(null);
   const [connection, setConnection] = useState<{ workspaceId: string; status: ConnectionStatus } | null>(null);
   const [connectionError, setConnectionError] = useState<{ workspaceId: string; message: string } | null>(null);
   const currentStatus = connection?.workspaceId === workspaceId ? connection.status : null;
   const currentError = connectionError?.workspaceId === workspaceId ? connectionError.message : "";
-  const fieldClass = "w-full rounded-lg border border-neutral-300 bg-white px-3 py-2";
-  async function token() {
-    const { data, error } = await supabase.auth.getSession();
-    if (error || !data.session) throw new Error("Sign in to HUSH first, then return to this page.");
-    return data.session.access_token;
-  }
+  const teamName = workspaces.find(team => team.id === workspaceId)?.name || "your team";
+  const fieldClass = "mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-2";
+  const buttonClass = "rounded-full bg-black px-6 py-3 text-white disabled:opacity-50";
+  const selections = Object.values(selected);
+  const validSelection = selections.length > 0 && selections.length <= 20 && selections.every(selection => selection.titlePropertyId && selection.statusPropertyId);
+
+  const showSources = useCallback((data: SourceResult, append: boolean) => {
+    setWorkspaceId(data.workspaceId);
+    setExisting(data.hasExistingConnection);
+    setNotionWorkspace(data.notionWorkspaceName);
+    setWorkspaces(teams => teams.some(team => team.id === data.workspaceId)
+      ? teams : [...teams, { id: data.workspaceId, name: data.teamName }]);
+    setSources(old => append
+      ? Array.from(new Map([...old, ...data.sources].map(source => [source.id, source])).values()) : data.sources);
+    if (!append) {
+      setSelected(previous => {
+        const retained = Object.fromEntries(Object.entries(previous).filter(([id]) => data.sources.some(source => source.id === id)));
+        if (Object.keys(retained).length || data.sources.length !== 1) return retained;
+        const selection = defaultSelection(data.sources[0]);
+        return selection.titlePropertyId && selection.statusPropertyId ? { [selection.id]: selection } : {};
+      });
+    }
+    setCursor(data.nextCursor);
+    setChoosing(true);
+    setSaved(false);
+  }, []);
+
   async function loadSources(next?: string) {
     if (lock.current) return;
-    lock.current = true; setBusy(true); setMessage("");
+    lock.current = true;
+    setBusy(true);
+    setMessage("");
     try {
-      const response = await fetch(`/api/notion/oauth/sources${next ? `?cursor=${encodeURIComponent(next)}` : ""}`, { headers: { Authorization: `Bearer ${await token()}` }, cache: "no-store" });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "Could not load sources.");
-      setWorkspaceId(data.workspaceId); setExisting(data.hasExistingConnection);
-      setSources(old => next ? Array.from(new Map([...old, ...data.sources].map((source: Source) => [source.id, source])).values()) : data.sources);
-      setCursor(data.nextCursor); setChoosing(true);
-      if (!data.sources.length && !next) setMessage("No task sources are available yet. Share the task databases when connecting; new access can take a moment to appear.");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not load sources."); }
-    finally { lock.current = false; setBusy(false); }
+      showSources(await fetchSources(workspaceId, next), Boolean(next));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not load your Notion task lists.");
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
   }
+
   useEffect(() => {
-    let active = true;
-    const status = new URLSearchParams(window.location.search).get("oauth");
-    void (async () => {
-      const { data: auth } = await supabase.auth.getSession();
-      if (!active) return;
-      if (status === "select_sources" && auth.session) { await loadSources(); return; }
-      if (status) setMessage(status === "cancelled" ? "Notion connection cancelled. You can start again." : "The connection could not be completed. Start again from this page.");
-      if (!auth.session) { if (active) setMessage("Sign in to HUSH first, then return to this page."); return; }
-      const memberships = await supabase.from("memberships").select("workspace_id").eq("user_id", auth.session.user.id).eq("role", "pm");
-      if (memberships.error) { if (active) setMessage("Could not load your teams."); return; }
-      const ids = (memberships.data || []).map(m => m.workspace_id);
-      if (!ids.length) { if (active) setMessage("This account does not manage a HUSH team yet."); return; }
-      const teams = await supabase.from("workspaces").select("id, name").in("id", ids);
-      if (!active) return;
-      if (teams.error) { setMessage("Could not load your teams."); return; }
-      const availableTeams = teams.data || [];
-      const requestedTeam = new URLSearchParams(window.location.search).get("workspaceId");
-      setWorkspaces(availableTeams);
-      setWorkspaceId(availableTeams.find(team => team.id === requestedTeam)?.id || availableTeams[0]?.id || "");
-    })();
-    return () => { active = false; };
-    // Run only when this page opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => {
-    if (!workspaceId || choosing) return;
     const controller = new AbortController();
-    void (async () => {
+    async function initialize() {
+      setLoading(true);
+      try {
+        const { data: auth, error } = await supabase.auth.getSession();
+        if (controller.signal.aborted) return;
+        if (error) throw error;
+        setSignedIn(Boolean(auth.session));
+        if (!auth.session) return;
+        const memberships = await supabase.from("memberships").select("workspace_id")
+          .eq("user_id", auth.session.user.id).eq("role", "pm").abortSignal(controller.signal);
+        if (memberships.error) throw new Error("Could not load your teams. Refresh this page to try again.");
+        const ids = (memberships.data || []).map(membership => membership.workspace_id);
+        if (!ids.length) {
+          setMessage("Only your team's manager can connect Notion. Ask your manager to finish setup, or create your own team.");
+          return;
+        }
+        const teams = await supabase.from("workspaces").select("id, name").in("id", ids).order("name").abortSignal(controller.signal);
+        if (teams.error) throw new Error("Could not load your teams. Refresh this page to try again.");
+        if (controller.signal.aborted) return;
+        const params = new URLSearchParams(window.location.search);
+        const requestedTeam = params.get("workspaceId");
+        const available = teams.data || [];
+        const team = available.find(item => item.id === requestedTeam) || available[0];
+        setWorkspaces(available);
+        setWorkspaceId(team?.id || "");
+        const status = params.get("oauth");
+        if (status && status !== "select_sources") {
+          setMessage(status === "cancelled"
+            ? "Notion permission was cancelled. Continue to Notion when you're ready."
+            : "Notion setup could not finish. If you started from the phone app, open this HUSH page in Safari or Chrome and connect there. After saving, reopen the phone app.");
+          return;
+        }
+        if (status === "select_sources") setChoosing(true);
+        // The temporary grant can still exist after navigating away from the callback URL.
+        const pending = await fetchSources(requestedTeam ? team?.id || "" : "", undefined, status !== "select_sources", controller.signal);
+        if (controller.signal.aborted) return;
+        if (pending.pending) showSources(pending, false);
+      } catch (error) {
+        if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Could not resume Notion setup. Try again below.");
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+    void initialize();
+    return () => controller.abort();
+  }, [sessionVersion, showSources]);
+
+  useEffect(() => {
+    if (!workspaceId || choosing || loading) return;
+    const controller = new AbortController();
+    async function checkConnection() {
       try {
         const response = await fetch(`/api/notion/management?workspaceId=${encodeURIComponent(workspaceId)}`, {
-          headers: { Authorization: `Bearer ${await token()}` },
-          signal: controller.signal,
+          headers: { Authorization: `Bearer ${await token()}` }, cache: "no-store", signal: controller.signal,
         });
         const status = await response.json();
-        if (!response.ok) throw new Error(status.message || "Could not load the connection.");
+        if (!response.ok) throw new Error(status.message || "Could not check the connection.");
         if (!controller.signal.aborted) {
           setConnection({ workspaceId, status });
           setConnectionError(null);
         }
       } catch (error) {
-        if (!controller.signal.aborted) setConnectionError({ workspaceId, message: error instanceof Error ? error.message : "Could not load the connection." });
+        if (!controller.signal.aborted) setConnectionError({ workspaceId, message: error instanceof Error ? error.message : "Could not check the connection." });
       }
-    })();
+    }
+    void checkConnection();
     return () => controller.abort();
-  }, [workspaceId, choosing]);
+  }, [workspaceId, choosing, loading]);
 
   async function disconnect() {
     if (lock.current || !currentStatus?.connected) return;
-    const team = workspaces.find(item => item.id === workspaceId)?.name || "this team";
-    if (!window.confirm(`Disconnect Notion from ${team}? HUSH will stop reading and sending updates to this team's task lists until you reconnect.`)) return;
-    lock.current = true; setBusy(true); setMessage("");
+    if (!window.confirm(`Disconnect Notion from ${teamName}? HUSH will stop reading and sending updates to this team's task lists until you reconnect.`)) return;
+    lock.current = true;
+    setBusy(true);
+    setMessage("");
     try {
       const response = await fetch(`/api/notion/management?workspaceId=${encodeURIComponent(workspaceId)}`, {
         method: "DELETE", headers: { Authorization: `Bearer ${await token()}` },
@@ -104,77 +198,130 @@ export default function ConnectNotionPage() {
       if (!response.ok) throw new Error(status.message || "Could not disconnect Notion.");
       setConnection({ workspaceId, status });
       setConnectionError(null);
-      setMessage(`Notion disconnected from ${team}.`);
+      setMessage(`Notion disconnected from ${teamName}.`);
     } catch (error) {
       setConnection(null);
       setConnectionError({ workspaceId, message: error instanceof Error ? error.message : "Could not confirm disconnection. Reload to check." });
-    } finally { lock.current = false; setBusy(false); }
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
   }
+
   async function start() {
     if (lock.current) return;
-    lock.current = true; setBusy(true); setMessage("");
+    lock.current = true;
+    setBusy(true);
+    setMessage("");
     try {
-      const response = await fetch("/api/notion/oauth/start", { method: "POST", headers: { Authorization: `Bearer ${await token()}`, "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId }) });
+      const response = await fetch("/api/notion/oauth/start", {
+        method: "POST", headers: { Authorization: `Bearer ${await token()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId }),
+      });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "Could not start the connection.");
       const url = new URL(data.authorizationUrl);
       if (url.origin !== "https://api.notion.com" || url.pathname !== "/v1/oauth/authorize") throw new Error("Invalid authorization address.");
       window.location.assign(url.toString());
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not start the connection."); lock.current = false; setBusy(false); }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not start the connection.");
+      lock.current = false;
+      setBusy(false);
+    }
   }
+
   function toggle(source: Source) {
     setSelected(old => {
       const updated = { ...old };
       if (updated[source.id]) delete updated[source.id];
-      else updated[source.id] = { id: source.id, titlePropertyId: source.properties.find(p => p.type === "title")?.id || "", statusPropertyId: source.properties.find(p => p.type === "status")?.id || "", datePropertyId: "", dateIsDeadline: false };
+      else updated[source.id] = defaultSelection(source);
       return updated;
     });
   }
-  function change(id: string, patch: Partial<Selection>) { setSelected(old => ({ ...old, [id]: { ...old[id], ...patch } })); }
-  async function save() {
-    if (lock.current) return;
-    lock.current = true; setBusy(true); setMessage("");
-    try {
-      const response = await fetch("/api/notion/oauth/sources", { method: "POST", headers: { Authorization: `Bearer ${await token()}`, "Content-Type": "application/json" }, body: JSON.stringify({ sources: Object.values(selected), replaceConfirmed: replace }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "Could not save the connection.");
-      setSaved(true); setMessage(`Notion connected with ${data.sourceCount} task sources.`); window.history.replaceState(null, "", "/connect-notion");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not confirm the result. Check before trying again."); }
-    finally { lock.current = false; setBusy(false); }
+
+  function change(id: string, patch: Partial<Selection>) {
+    setSelected(old => ({ ...old, [id]: { ...old[id], ...patch } }));
   }
+
+  async function save() {
+    if (lock.current || !validSelection || (existing && !replace)) return;
+    lock.current = true;
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/notion/oauth/sources", {
+        method: "POST", headers: { Authorization: `Bearer ${await token()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ sources: selections, replaceConfirmed: replace }),
+      });
+      const data = await response.json();
+      if (!response.ok || data.saved !== true) throw new Error(data.message || "Could not save the connection. Try again.");
+      setSavedCount(data.sourceCount);
+      setSaved(true);
+      window.history.replaceState(null, "", `/connect-notion?workspaceId=${encodeURIComponent(workspaceId)}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not confirm the save. Open Manage connection to check before starting again.");
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
+  }
+
+  const home = workspaceId ? `/?workspaceId=${encodeURIComponent(workspaceId)}` : "/";
   return <main className="min-h-screen bg-white px-6 py-14 text-black"><div className="mx-auto max-w-2xl space-y-6">
-    <h1 className="text-3xl font-semibold">Connect Notion</h1>
-    <p className="leading-7 text-neutral-600">Choose which task lists HUSH can use for your team. In Notion, share only the pages and databases your team needs.</p>
-    {!choosing && !saved && <div className="space-y-4">
-      <label className="block">HUSH team<select className={fieldClass} value={workspaceId} onChange={event => setWorkspaceId(event.target.value)} disabled={busy}>{workspaces.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label>
-      {workspaceId && <div className="space-y-2 rounded-xl border border-neutral-200 p-4" aria-live="polite">
-        <p className="font-semibold">{currentError ? "Could not check connection" : !currentStatus ? "Checking connection…" : !currentStatus.connected ? "Not connected" : currentStatus.expired ? "Reconnect required" : "Connection saved"}</p>
-        {currentError && <p className="text-sm text-neutral-600">{currentError}</p>}
-        {currentStatus?.connected && <>
-          {currentStatus.notionWorkspace && <p>{currentStatus.notionWorkspace}</p>}
-          <p className="text-sm text-neutral-600">{currentStatus.sources?.length ? `Task lists: ${currentStatus.sources.join(", ")}` : "No enabled task lists."}</p>
-          <button type="button" disabled={busy} onClick={() => void disconnect()} className="text-sm underline disabled:opacity-50">Disconnect Notion</button>
-        </>}
-      </div>}
-      <button disabled={busy || !workspaceId} onClick={start} className="rounded-full bg-black px-6 py-3 text-white disabled:opacity-50">{busy ? "Working…" : currentStatus?.connected ? "Reconnect Notion" : "Continue to Notion"}</button>
-    </div>}
-    {choosing && !saved && <div className="space-y-6">
-      <p>Choose your task sources and check their fields. Only selected sources will be used after saving.</p>
-      {sources.map(source => <section key={source.id} className="space-y-4 border-b border-neutral-200 pb-6">
-        <label className="flex items-center gap-3"><input type="checkbox" disabled={busy} checked={Boolean(selected[source.id])} onChange={() => toggle(source)} />{source.name}</label>
-        <p className="break-all text-xs text-neutral-500">Source ID: {source.id}</p>
-        {selected[source.id] && <div className="space-y-3 pl-6">
-          {([['titlePropertyId', 'Task title', 'title'], ['statusPropertyId', 'Status', 'status'], ['datePropertyId', 'Date (optional)', 'date']] as const).map(([key, label, type]) => <label className="block" key={key}>{label}<select className={fieldClass} disabled={busy} value={selected[source.id][key]} onChange={event => change(source.id, { [key]: event.target.value, ...(key === "datePropertyId" ? { dateIsDeadline: false } : {}) })}><option value="">{key === "datePropertyId" ? "No date" : "Choose a field"}</option>{source.properties.filter(p => p.type === type).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>)}
-          {selected[source.id].datePropertyId && <label className="flex items-center gap-3"><input type="checkbox" disabled={busy} checked={selected[source.id].dateIsDeadline} onChange={event => change(source.id, { dateIsDeadline: event.target.checked })} />This date is a deadline. Otherwise, show it as a planned date.</label>}
+    <h1 className="text-3xl font-semibold">{saved ? "Notion is connected" : choosing ? "Finish connecting Notion" : "Connect Notion"}</h1>
+    {loading ? <p role="status">Checking your team setup…</p> : !signedIn ? <>
+      <p>Sign in with the HUSH account that started this setup. We will continue your Notion connection here.</p>
+      <HushAccountForm onSignedIn={() => setSessionVersion(value => value + 1)} />
+    </> : <>
+      {choosing || saved ? <p>HUSH team <strong>{teamName}</strong>{notionWorkspace && <> · Notion workspace <strong>{notionWorkspace}</strong></>}</p>
+        : <p>Choose your HUSH team, allow access in Notion, then return here to select and save its task lists.</p>}
+      {!choosing && !saved && <div className="space-y-4">
+        <label className="block">HUSH team<select className={fieldClass} value={workspaceId} onChange={event => {
+          const id = event.target.value;
+          setWorkspaceId(id);
+          window.history.replaceState(null, "", `/connect-notion?workspaceId=${encodeURIComponent(id)}`);
+        }} disabled={busy}>{workspaces.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label>
+        {workspaceId && <div className="space-y-2 rounded-xl border border-neutral-200 p-4" aria-live="polite">
+          <p className="font-semibold">{currentError ? "Could not check connection" : !currentStatus ? "Checking connection…" : !currentStatus.connected ? "Setup needed" : currentStatus.expired ? "Reconnect required" : "Connection saved"}</p>
+          {currentError && <p className="text-sm text-neutral-600">{currentError}</p>}
+          {currentStatus?.connected && <>
+            {currentStatus.notionWorkspace && <p>{currentStatus.notionWorkspace}</p>}
+            <p className="text-sm text-neutral-600">{currentStatus.sources?.length ? `Task lists: ${currentStatus.sources.join(", ")}` : "Choose a task list to finish setup."}</p>
+            <button type="button" disabled={busy} onClick={() => void disconnect()} className="text-sm underline disabled:opacity-50">Disconnect Notion</button>
+          </>}
         </div>}
-      </section>)}
-      {cursor && <button disabled={busy} onClick={() => void loadSources(cursor)} className="underline">Load more sources</button>}
-      {!sources.length && <button disabled={busy} onClick={() => void loadSources()} className="underline">Refresh sources</button>}
-      {existing && <label className="flex items-start gap-3"><input type="checkbox" disabled={busy} checked={replace} onChange={event => setReplace(event.target.checked)} />Replace this team&apos;s current Notion connection and source list with my selections.</label>}
-      <button disabled={busy || !Object.keys(selected).length || (existing && !replace)} onClick={save} className="rounded-full bg-black px-6 py-3 text-white disabled:opacity-50">{busy ? "Working…" : "Save connection"}</button>
-    </div>}
-    {saved && <a href={`/connect-notion?workspaceId=${encodeURIComponent(workspaceId)}`} className="block underline">Manage connection</a>}
-    {message && <p role="status" className="leading-7">{message}</p>}
-    <Link href="/" className="block underline">Back to HUSH</Link>
+        <button disabled={busy || !workspaceId} onClick={start} className={buttonClass}>{busy ? "Working…" : currentStatus?.connected ? "Reconnect Notion" : "Continue to Notion"}</button>
+        <p className="text-sm text-neutral-600">For phone setup, complete these steps in Safari or Chrome. You can use your team from the installed HUSH app afterwards.</p>
+        {!workspaces.length && <Link className="block underline" href="/create-team">Create your team</Link>}
+      </div>}
+      {choosing && !saved && <div className="space-y-6">
+        <p className="rounded-xl bg-neutral-50 p-4">Notion access is approved. Select your task list below and press <strong>Save connection</strong> to finish.</p>
+        {!sources.length && <p>We could not find a shared task database yet. Select the page containing your task database in Notion. A database needs a task title and a Status property.</p>}
+        {sources.map(source => <section key={source.id} className="space-y-4 border-b border-neutral-200 pb-6">
+          <label className="flex items-center gap-3"><input type="checkbox" disabled={busy} checked={Boolean(selected[source.id])} onChange={() => toggle(source)} />{source.name}</label>
+          {!source.properties.some(property => property.type === "status") && <p className="text-sm text-neutral-600">Add a Status property to this database in Notion, then refresh task lists here.</p>}
+          {selected[source.id] && <div className="space-y-3 pl-6">
+            {([['titlePropertyId', 'Task title', 'title'], ['statusPropertyId', 'Status', 'status'], ['datePropertyId', 'Date (optional)', 'date']] as const).map(([key, label, type]) => <label className="block" key={key}>{label}<select className={fieldClass} disabled={busy} value={selected[source.id][key]} onChange={event => change(source.id, { [key]: event.target.value, ...(key === "datePropertyId" ? { dateIsDeadline: false } : {}) })}><option value="">{key === "datePropertyId" ? "No date" : "Choose a field"}</option>{source.properties.filter(property => property.type === type).map(property => <option key={property.id} value={property.id}>{property.name}</option>)}</select></label>)}
+            {selected[source.id].datePropertyId && <label className="flex items-center gap-3"><input type="checkbox" disabled={busy} checked={selected[source.id].dateIsDeadline} onChange={event => change(source.id, { dateIsDeadline: event.target.checked })} />This date is a deadline. Otherwise, show it as a planned date.</label>}
+          </div>}
+        </section>)}
+        {cursor && <button disabled={busy} onClick={() => void loadSources(cursor)} className="underline">Load more task lists</button>}
+        {existing && <label className="flex items-start gap-3"><input type="checkbox" disabled={busy} checked={replace} onChange={event => setReplace(event.target.checked)} />Replace this team&apos;s current Notion connection and source list with my selections.</label>}
+        <button disabled={busy || !validSelection || (existing && !replace)} onClick={save} className={buttonClass}>{busy ? "Saving…" : "Save connection"}</button>
+        {!validSelection && <p className="text-sm text-neutral-600">Select between 1 and 20 task lists and choose each list’s task title and Status fields.</p>}
+        <div className="flex flex-wrap gap-4 text-sm">
+          <button disabled={busy} onClick={() => void loadSources()} className="underline">Refresh task lists</button>
+          <button disabled={busy} onClick={start} className="underline">Choose different Notion pages</button>
+        </div>
+        <p className="text-sm text-neutral-600">Finish setup in this browser. If you are using the phone app, reopen HUSH from its Home Screen icon after saving.</p>
+      </div>}
+      {saved && <div className="space-y-4" role="status">
+        <p>{savedCount} task {savedCount === 1 ? "list is" : "lists are"} connected to {teamName}. You can now find tasks and send updates.</p>
+        <Link className={`${buttonClass} inline-block`} href={home}>Open your team</Link>
+      </div>}
+    </>}
+    {message && <p role="alert" className="leading-7">{message}</p>}
+    {workspaceId && <a href={`/connect-notion?workspaceId=${encodeURIComponent(workspaceId)}`} className="block text-sm underline">Manage connection</a>}
+    {!saved && <Link href={home} className="block underline">{choosing ? "Return to HUSH before finishing" : "Back to HUSH"}</Link>}
   </div></main>;
 }
