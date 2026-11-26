@@ -51,6 +51,7 @@ function defaultSelection(source: Source): Selection {
 
 export default function ConnectNotionPage() {
   const lock = useRef(false);
+  const authorizationWindow = useRef<Window | null>(null);
   const [workspaces, setWorkspaces] = useState<Team[]>([]);
   const [workspaceId, setWorkspaceId] = useState("");
   const [sources, setSources] = useState<Source[]>([]);
@@ -114,10 +115,52 @@ export default function ConnectNotionPage() {
   }
 
   useEffect(() => {
+    function returned(event: MessageEvent) {
+      if (event.origin !== window.location.origin || !authorizationWindow.current ||
+          event.source !== authorizationWindow.current || event.data?.type !== "hush-notion-return") return;
+      const status = event.data.status;
+      if (!["select_sources", "cancelled", "invalid", "denied", "exchange_failed", "failed"].includes(status)) return;
+      if (event.data.workspaceId !== workspaceId &&
+          !(event.data.workspaceId === null && status !== "select_sources")) return;
+      authorizationWindow.current.close();
+      authorizationWindow.current = null;
+      const destination = new URL("/connect-notion", window.location.origin);
+      destination.searchParams.set("workspaceId", workspaceId);
+      destination.searchParams.set("oauth", status);
+      window.location.assign(destination.toString());
+    }
+    function refreshed() {
+      if (authorizationWindow.current?.closed) {
+        authorizationWindow.current = null;
+        setSessionVersion(value => value + 1);
+      }
+    }
+    window.addEventListener("message", returned);
+    window.addEventListener("focus", refreshed);
+    return () => {
+      window.removeEventListener("message", returned);
+      window.removeEventListener("focus", refreshed);
+    };
+  }, [workspaceId]);
+
+  useEffect(() => {
     const controller = new AbortController();
     async function initialize() {
       setLoading(true);
       try {
+        const returned = new URLSearchParams(window.location.search);
+        const status = returned.get("oauth");
+        // Return only the result, never tokens, to the app window that opened Notion.
+        // If the provider severed the opener, setup continues in this window instead.
+        if (status && window.opener) {
+          try {
+            window.opener.postMessage({
+              type: "hush-notion-return", status, workspaceId: returned.get("workspaceId"),
+            }, window.location.origin);
+          } catch {
+            // Continue setup here if the opening app window is no longer reachable.
+          }
+        }
         const { data: auth, error } = await supabase.auth.getSession();
         if (controller.signal.aborted) return;
         if (error) throw error;
@@ -140,11 +183,10 @@ export default function ConnectNotionPage() {
         const team = available.find(item => item.id === requestedTeam) || available[0];
         setWorkspaces(available);
         setWorkspaceId(team?.id || "");
-        const status = params.get("oauth");
         if (status && status !== "select_sources") {
           setMessage(status === "cancelled"
             ? "Notion permission was cancelled. Continue to Notion when you're ready."
-            : "Notion setup could not finish. If you started from the phone app, open this HUSH page in Safari or Chrome and connect there. After saving, reopen the phone app.");
+            : "Notion setup could not finish. Select Continue to Notion to try again from HUSH.");
           return;
         }
         if (status === "select_sources") setChoosing(true);
@@ -210,10 +252,24 @@ export default function ConnectNotionPage() {
 
   async function start() {
     if (lock.current) return;
+    if (authorizationWindow.current && !authorizationWindow.current.closed) {
+      authorizationWindow.current.focus();
+      return;
+    }
+    // Open synchronously from the tap so the installed app keeps its own browser context.
+    // Opening after the session/request awaits loses the browser's user activation.
+    const installed = window.matchMedia("(display-mode: standalone)").matches ||
+      (navigator as Navigator & { standalone?: boolean }).standalone === true;
+    const popup = installed ? window.open("about:blank", "_blank") : null;
+    authorizationWindow.current = popup;
     lock.current = true;
     setBusy(true);
     setMessage("");
     try {
+      if (popup) {
+        popup.document.title = "Connect Notion — HUSH";
+        popup.document.body?.append("Opening Notion…");
+      }
       const response = await fetch("/api/notion/oauth/start", {
         method: "POST", headers: { Authorization: `Bearer ${await token()}`, "Content-Type": "application/json" },
         body: JSON.stringify({ workspaceId }),
@@ -222,9 +278,22 @@ export default function ConnectNotionPage() {
       if (!response.ok) throw new Error(data.message || "Could not start the connection.");
       const url = new URL(data.authorizationUrl);
       if (url.origin !== "https://api.notion.com" || url.pathname !== "/v1/oauth/authorize") throw new Error("Invalid authorization address.");
-      window.location.assign(url.toString());
+      if (popup) {
+        if (popup.closed) {
+          authorizationWindow.current = null;
+          setMessage("Notion setup was closed. Select Continue to Notion when you're ready.");
+          return;
+        }
+        popup.location.replace(url.toString());
+        setMessage("Complete the Notion permission screen. HUSH will continue setup when you return.");
+      } else {
+        window.location.assign(url.toString());
+      }
     } catch (error) {
+      popup?.close();
+      authorizationWindow.current = null;
       setMessage(error instanceof Error ? error.message : "Could not start the connection.");
+    } finally {
       lock.current = false;
       setBusy(false);
     }
@@ -291,7 +360,6 @@ export default function ConnectNotionPage() {
           </>}
         </div>}
         <button disabled={busy || !workspaceId} onClick={start} className={buttonClass}>{busy ? "Working…" : currentStatus?.connected ? "Reconnect Notion" : "Continue to Notion"}</button>
-        <p className="text-sm text-neutral-600">For phone setup, complete these steps in Safari or Chrome. You can use your team from the installed HUSH app afterwards.</p>
         {!workspaces.length && <Link className="block underline" href="/create-team">Create your team</Link>}
       </div>}
       {choosing && !saved && <div className="space-y-6">
@@ -313,7 +381,6 @@ export default function ConnectNotionPage() {
           <button disabled={busy} onClick={() => void loadSources()} className="underline">Refresh task lists</button>
           <button disabled={busy} onClick={start} className="underline">Choose different Notion pages</button>
         </div>
-        <p className="text-sm text-neutral-600">Finish setup in this browser. If you are using the phone app, reopen HUSH from its Home Screen icon after saving.</p>
       </div>}
       {saved && <div className="space-y-4" role="status">
         <p>{savedCount} task {savedCount === 1 ? "list is" : "lists are"} connected to {teamName}. You can now find tasks and send updates.</p>
