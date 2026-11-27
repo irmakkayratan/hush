@@ -16,9 +16,10 @@ export type NotionSource = {
 
 export async function getWorkspaceNotionConnection(
   request: Request,
-  workspaceId: string
+  workspaceId: string,
+  options?: { requirePM?: boolean }
 ) {
-  const access = await requireWorkspaceAccess(request, workspaceId);
+  const access = await requireWorkspaceAccess(request, workspaceId, options);
   const { data, error } = await access.admin.rpc("hush_get_notion_connection", {
     p_workspace_id: access.workspaceId,
     p_user_id: access.user.id,

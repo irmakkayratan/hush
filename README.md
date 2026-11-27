@@ -8,9 +8,23 @@ HUSH turns written and spoken notes into English updates for existing Notion tas
 
 Open [HUSH](https://hush-e26z.onrender.com) and sign in with your team account. On iPhone, open the same address in Safari and choose **Add to Home Screen**. Open HUSH from the new icon and enable **Team notifications on this device** from your team.
 
-## Try the demo
+## Try the portfolio demo
 
-Download the repository and open `docs/index.html` in a browser. The demo uses sample notes and runs without accounts, keys or paid services. To embed it in a portfolio, publish the `docs` folder with [GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site) and use the resulting HTTPS URL in an iframe with the title `HUSH demo`.
+Open `docs/index.html` in a browser to try the simulated Notion connection and sample note workflow. Everything runs in the browser with fictional data and no accounts or keys. The [sample tasks CSV](docs/sample-tasks.csv) can also seed a real demo workspace.
+
+For a public portfolio:
+
+1. Upload a clean source snapshot to your portfolio's GitHub repository. Use the included `.env.example` for configuration examples. Keep operational team repositories, `.env.local`, keys and workspace exports private.
+2. In **Settings → Pages**, choose **Deploy from a branch**, then `main` and `/docs`. Use the resulting GitHub Pages URL for the portfolio’s **Try the demo** link. Point **Download source** to the GitHub repository or its **Code → Download ZIP** link. See [GitHub Pages publishing options](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
+3. To demonstrate an actual Notion write, create a separate Notion workspace named **HUSH Demo**. Import the sample CSV as a table named **Demo Studio Tasks**, check that `Name` is the title column, and add a Notion **Status** property. Set up the app with a separate Supabase project, Notion OAuth credentials and encryption key. Make a demo team, authorize only the sample task list, then record the connection check and test task for your portfolio.
+
+## Set up a team’s Notion connection
+
+1. Create or select a small pilot task database in the team's Notion workspace. It needs a title property and a **Status** property. Add a date property if useful.
+2. On the team's existing HTTPS HUSH deployment, configure its existing Notion OAuth client and encryption key. Register the full production callback URL, for example `https://hush.example.com/api/notion/oauth/callback`, with that client and set the identical value for `NOTION_OAUTH_REDIRECT_URI` on the host. Keep the existing encryption key when reusing a Supabase project with saved connections. A fresh demo deployment uses its own Supabase project, OAuth client and key.
+3. A HUSH team manager signs in, opens the team, chooses **Team updates → Connect Notion**, and authorizes the pilot database in Notion. Select that database in HUSH, map its fields and save. A team with a working saved connection can test it before deciding whether to reconnect. Reconnecting replaces the current selections and should preserve the lists the team uses.
+4. Select the task list under **Test the Notion connection**, then choose **Check connection → Create test task → Open test task in Notion**. Verify the row appears in the selected database. The row is named `[HUSH TEST] Notion connection` so you can remove it afterward.
+5. Share the existing team HUSH URL with authorized users. The manager configures the connection once for the team. Each member signs in with their existing HUSH account.
 
 ## Run the full application locally
 

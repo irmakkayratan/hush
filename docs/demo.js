@@ -44,3 +44,19 @@ review.addEventListener("submit", (event) => {
   result.textContent = `Demo update confirmed for ${examples[choice.value].task}. Status set to ${status.value} in the demo.`;
   draft.querySelector("button").focus();
 });
+
+const checkConnection = document.querySelector("#check-connection");
+const createTest = document.querySelector("#create-test");
+const connectionResult = document.querySelector("#connection-result");
+
+checkConnection.addEventListener("click", () => {
+  connectionResult.textContent = "Demo Studio Tasks is ready.";
+  createTest.disabled = false;
+  checkConnection.disabled = true;
+  createTest.focus();
+});
+
+createTest.addEventListener("click", () => {
+  connectionResult.textContent = "Created in the demo: [HUSH TEST] Notion connection.";
+  createTest.disabled = true;
+});

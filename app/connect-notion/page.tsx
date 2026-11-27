@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import HushAccountForm from "../hush-account-form";
+import ConnectionTest from "./connection-test";
 
 type Team = { id: string; name: string };
 type ConnectionStatus = { connected: boolean; notionWorkspace?: string; expired?: boolean; sources?: string[] };
@@ -359,6 +360,7 @@ export default function ConnectNotionPage() {
             <button type="button" disabled={busy} onClick={() => void disconnect()} className="text-sm underline disabled:opacity-50">Disconnect Notion</button>
           </>}
         </div>}
+        {currentStatus?.connected && <ConnectionTest key={workspaceId} workspaceId={workspaceId} />}
         <button disabled={busy || !workspaceId} onClick={start} className={buttonClass}>{busy ? "Working…" : currentStatus?.connected ? "Reconnect Notion" : "Continue to Notion"}</button>
         {!workspaces.length && <Link className="block underline" href="/create-team">Create your team</Link>}
       </div>}
@@ -382,6 +384,7 @@ export default function ConnectNotionPage() {
           <button disabled={busy} onClick={start} className="underline">Choose different Notion pages</button>
         </div>
       </div>}
+      {saved && <ConnectionTest key={workspaceId} workspaceId={workspaceId} />}
       {saved && <div className="space-y-4" role="status">
         <p>{savedCount} task {savedCount === 1 ? "list is" : "lists are"} connected to {teamName}. You can now find tasks and send updates.</p>
         <Link className={`${buttonClass} inline-block`} href={home}>Open your team</Link>
